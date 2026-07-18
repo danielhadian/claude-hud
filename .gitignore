@@ -1,0 +1,25 @@
+# --- local-only working files (never publish) --------------------------------
+/tasks/
+/.claude/
+CLAUDE.md
+CLAUDE.local.md
+
+# Board-specific flash backups (multi-MB binaries, useless to anyone else)
+/backup/
+
+# --- build artifacts ----------------------------------------------------------
+# Host tool binaries (build with: go build -o claude-usage .)
+/tools/claude-usage/claude-usage
+/tools/claude-usage/claude-usage.exe
+
+# arduino-cli build output
+/firmware/build/
+/firmware/**/build/
+
+# --- editor / OS noise --------------------------------------------------------
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/

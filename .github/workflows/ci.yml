@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  host-tool:
+    name: host tool (Go)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tools/claude-usage
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: tools/claude-usage/go.mod
+      - name: formatting
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - name: vet
+        run: go vet ./...
+      - name: test (race detector)
+        run: go test ./... -race -count=1
+      - name: cross-compile all supported platforms
+        run: |
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+            GOOS=${target%/*} GOARCH=${target#*/} go build -o /dev/null .
+            echo "build $target OK"
+          done
+      - name: vet windows-specific code
+        run: GOOS=windows go vet ./...
+
+  firmware:
+    name: firmware (ESP8266)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-arduino-cli@v2
+      - name: install esp8266 core and libraries
+        working-directory: firmware
+        run: make deps ACLI=arduino-cli
+      - name: compile all sketches
+        working-directory: firmware
+        run: make build-all ACLI=arduino-cli
