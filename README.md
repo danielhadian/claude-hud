@@ -6,6 +6,12 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platforms](https://img.shields.io/badge/host-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey)](#platform-support)
 
+<div align="center">
+  <img src="docs/images/panel.png" alt="The claude-hud reference panel: a coral-on-black usage screen showing 5-hour and weekly limit meters with reset countdowns, a Max 20x tier pill, and one dot per open Claude Code session" width="380">
+  <br>
+  <sub>The reference firmware's usage view — <code>5-HOUR</code> / <code>WEEKLY</code> meters, tier pill, live reset countdowns, and one dot per session.</sub>
+</div>
+
 A hardware HUD for Claude Code: 5-hour and weekly limit percentages with live
 countdown timers, your subscription tier, and how many Claude Code sessions
 are open and working right now. A small Go binary runs as **Claude Code's
