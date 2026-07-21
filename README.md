@@ -10,6 +10,8 @@
   <img src="docs/images/panel.png" alt="The claude-hud reference panel: a coral-on-black usage screen showing 5-hour and weekly limit meters with reset countdowns, a Max 20x tier pill, and one dot per open Claude Code session" width="380">
   <br>
   <sub>The reference firmware's usage view — <code>5-HOUR</code> / <code>WEEKLY</code> meters, tier pill, live reset countdowns, and one dot per session.</sub>
+  <br><br>
+  <a href="https://danielhadian.github.io/claude-hud/simulator.html"><b>▶&nbsp;Try the panel in your browser</b></a> — an exact recreation (<a href="docs/simulator.html">source</a>): the real bitmaps and glyph data drawn with ported <code>Adafruit_GFX</code> primitives, with sliders for every field the host pushes.
 </div>
 
 A hardware HUD for Claude Code: 5-hour and weekly limit percentages with live
@@ -152,6 +154,10 @@ Three tiers of "different", from smallest to largest:
    formats and a checklist of six behaviours; the spec includes a worked
    example. The host tool needs zero changes — set `baud` in `config.json` if
    your device wants something other than 115200.
+
+Whatever you target, the [browser simulator](https://danielhadian.github.io/claude-hud/simulator.html)
+doubles as a runnable rendering reference: it draws the exact view the
+reference firmware draws, from the same wire values you'll be parsing.
 
 If you build one, open a PR or an issue — ports and photos are the most
 welcome contributions there are.
@@ -297,6 +303,7 @@ firmware/
   scripts/              SVG→RGB565 rasterisers, reset_probe.py, panel preview
 docs/PROTOCOL.md        the wire protocol — implement this to use ANY hardware
 docs/HARDWARE.md        reference build: every measured number, and the traps
+docs/simulator.html     the panel recreated in a browser — the rendering spec, runnable
 docs/design/            design rationale (spec.md) and build history (build-plan.md)
 ```
 

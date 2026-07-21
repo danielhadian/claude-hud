@@ -1,0 +1,573 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="description" content="An exact browser recreation of the claude-hud reference panel: the real bitmaps, the real glyph data, and ported Adafruit_GFX primitives on a 128×160 buffer.">
+<title>claude-hud — the panel, pixel for pixel</title>
+<style>
+  :root{
+    --bg:#ecebe8; --panel:#f7f6f3; --panel-2:#efedea;
+    --ink:#1b1a18; --muted:#6b6762; --faint:#928d86;
+    --line:rgba(20,16,12,.12); --line-2:rgba(20,16,12,.07);
+    --accent:#c65f3e; --accent-ink:#c65f3e;
+    --shadow:0 1px 2px rgba(20,16,12,.05), 0 24px 60px -30px rgba(20,16,12,.35);
+    --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#141318; --panel:#1d1c22; --panel-2:#232128;
+      --ink:#ecebe9; --muted:#a29e98; --faint:#77736d;
+      --line:rgba(255,255,255,.09); --line-2:rgba(255,255,255,.05);
+      --accent:#e07b57; --accent-ink:#e88a67;
+      --shadow:0 1px 2px rgba(0,0,0,.4), 0 30px 70px -34px rgba(0,0,0,.8);
+    }
+  }
+  :root[data-theme="light"]{
+    --bg:#ecebe8; --panel:#f7f6f3; --panel-2:#efedea;
+    --ink:#1b1a18; --muted:#6b6762; --faint:#928d86;
+    --line:rgba(20,16,12,.12); --line-2:rgba(20,16,12,.07);
+    --accent:#c65f3e; --accent-ink:#c65f3e;
+    --shadow:0 1px 2px rgba(20,16,12,.05), 0 24px 60px -30px rgba(20,16,12,.35);
+  }
+  :root[data-theme="dark"]{
+    --bg:#141318; --panel:#1d1c22; --panel-2:#232128;
+    --ink:#ecebe9; --muted:#a29e98; --faint:#77736d;
+    --line:rgba(255,255,255,.09); --line-2:rgba(255,255,255,.05);
+    --accent:#e07b57; --accent-ink:#e88a67;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 30px 70px -34px rgba(0,0,0,.8);
+  }
+
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:var(--sans); line-height:1.55;
+    -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+  }
+  .wrap{
+    max-width:940px; margin:0 auto; padding:clamp(28px,5vw,64px) clamp(18px,4vw,40px) 64px;
+  }
+
+  /* ---- intro ------------------------------------------------------------ */
+  .eyebrow{
+    font-family:var(--mono); font-size:.72rem; letter-spacing:.2em; text-transform:uppercase;
+    color:var(--faint); margin:0 0 18px; display:flex; align-items:center; gap:.7em;
+  }
+  .eyebrow b{color:var(--accent-ink); font-weight:600}
+  .eyebrow .rule{flex:1; height:1px; background:var(--line)}
+  h1{
+    font-size:clamp(1.9rem,4.4vw,2.75rem); line-height:1.06; letter-spacing:-.025em;
+    font-weight:680; margin:0 0 .5em; text-wrap:balance; max-width:16ch;
+  }
+  h1 em{font-style:normal; color:var(--accent-ink)}
+  .dek{font-size:1.03rem; color:var(--muted); margin:0; max-width:60ch}
+
+  /* ---- stage / device --------------------------------------------------- */
+  .stage{
+    margin:clamp(30px,5vw,52px) 0;
+    display:flex; flex-direction:column; align-items:center; gap:16px;
+  }
+  .device{
+    --k: min(384px, 82vw);
+    width:var(--k); background:linear-gradient(#26262b,#141416 62%,#0d0d0f);
+    border-radius:16px; padding:16px 16px 34px;
+    box-shadow:var(--shadow),
+               inset 0 1px 0 rgba(255,255,255,.09),
+               inset 0 -1px 0 rgba(0,0,0,.5);
+    position:relative;
+  }
+  .glass{
+    position:relative; border-radius:5px; overflow:hidden;
+    background:#000; aspect-ratio:128/160;
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.06),
+               0 0 0 3px #060607, 0 8px 22px -8px rgba(0,0,0,.7);
+  }
+  canvas{
+    display:block; width:100%; height:100%;
+    image-rendering:pixelated; image-rendering:crisp-edges;
+  }
+  .chin{
+    position:absolute; left:18px; right:18px; bottom:11px;
+    display:flex; align-items:center; justify-content:space-between;
+    font-family:var(--mono); font-size:.6rem; letter-spacing:.16em;
+    text-transform:uppercase; color:#5c5b60;
+  }
+  .led{display:inline-flex; align-items:center; gap:6px}
+  .led i{
+    width:6px; height:6px; border-radius:50%; background:#e07b57;
+    box-shadow:0 0 5px 1px rgba(224,123,87,.75);
+  }
+  .cap{
+    font-family:var(--mono); font-size:.72rem; letter-spacing:.04em;
+    color:var(--faint); margin:0; text-align:center;
+  }
+  .replay{
+    background:none; border:0; color:var(--muted); cursor:pointer;
+    font-family:var(--mono); font-size:.72rem; letter-spacing:.04em;
+    padding:2px 4px; border-radius:5px; text-decoration:underline dotted; text-underline-offset:3px;
+  }
+  .replay:hover{color:var(--accent-ink)}
+
+  /* ---- panels ----------------------------------------------------------- */
+  .panel{
+    background:var(--panel); border:1px solid var(--line); border-radius:14px;
+    padding:20px clamp(16px,3vw,24px); margin-top:22px;
+  }
+  .panel > h2{
+    font-family:var(--mono); font-size:.7rem; letter-spacing:.18em; text-transform:uppercase;
+    color:var(--faint); margin:0 0 16px; font-weight:600;
+    display:flex; align-items:center; gap:.7em;
+  }
+  .panel > h2 .rule{flex:1; height:1px; background:var(--line-2)}
+
+  .controls-grid{
+    display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:18px 26px;
+  }
+  .ctl{display:flex; flex-direction:column; gap:8px}
+  .ctl .top{display:flex; justify-content:space-between; align-items:baseline; gap:8px}
+  .ctl label{font-size:.86rem; color:var(--ink); font-weight:560}
+  .ctl .val{
+    font-family:var(--mono); font-size:.82rem; color:var(--accent-ink);
+    font-variant-numeric:tabular-nums;
+  }
+  input[type=range]{
+    -webkit-appearance:none; appearance:none; width:100%; height:4px; border-radius:4px;
+    background:linear-gradient(var(--accent),var(--accent)) no-repeat, var(--panel-2);
+    background-size:var(--fill,50%) 100%; outline:none; cursor:pointer;
+  }
+  input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none; width:16px; height:16px; border-radius:50%;
+    background:var(--panel); border:2px solid var(--accent); box-shadow:0 1px 3px rgba(0,0,0,.3); cursor:pointer;
+  }
+  input[type=range]::-moz-range-thumb{
+    width:15px; height:15px; border-radius:50%;
+    background:var(--panel); border:2px solid var(--accent); cursor:pointer;
+  }
+  .row{display:flex; align-items:center; gap:10px}
+  .stepper{display:inline-flex; align-items:center; border:1px solid var(--line); border-radius:9px; overflow:hidden}
+  .stepper button{
+    width:34px; height:34px; border:0; background:var(--panel-2); color:var(--ink);
+    font-size:1.1rem; cursor:pointer; line-height:1;
+  }
+  .stepper button:hover{color:var(--accent-ink)}
+  .stepper output{
+    min-width:38px; text-align:center; font-family:var(--mono); font-variant-numeric:tabular-nums;
+    font-size:.95rem;
+  }
+  input[type=text]{
+    width:100%; padding:9px 12px; border:1px solid var(--line); border-radius:9px;
+    background:var(--panel-2); color:var(--ink); font-family:var(--sans); font-size:.9rem;
+  }
+  input:focus-visible, button:focus-visible, .replay:focus-visible{
+    outline:2px solid var(--accent); outline-offset:2px;
+  }
+
+  /* ---- wire readout ----------------------------------------------------- */
+  .wire pre{
+    margin:0; font-family:var(--mono); font-size:clamp(.68rem,2.3vw,.82rem); line-height:1.9;
+    color:var(--ink); overflow-x:auto; white-space:pre; padding:2px 0;
+  }
+  .wire .k{color:var(--faint)}
+  .wire .pre{color:var(--accent-ink); font-weight:600}
+  .wire .v{color:var(--ink)}
+  .wire .cap2{color:var(--muted); font-family:var(--sans); font-size:.86rem; margin:0 0 14px}
+
+  .note{
+    margin-top:30px; padding-top:20px; border-top:1px solid var(--line);
+    color:var(--muted); font-size:.85rem; max-width:66ch;
+  }
+  .note code{font-family:var(--mono); font-size:.82em; color:var(--accent-ink)}
+  a{color:var(--accent-ink)}
+  @media (prefers-reduced-motion:reduce){ .led i{box-shadow:none} }
+</style>
+</head>
+<body>
+
+<main class="wrap">
+  <p class="eyebrow"><b>claude-hud</b> · reference device <span class="rule"></span> 128 × 160 ST7735</p>
+  <h1>The panel, rendered <em>pixel&nbsp;for&nbsp;pixel</em>.</h1>
+  <p class="dek">A faithful recreation of the usage screen the firmware paints on its little TFT — drawn here with the same Adafruit glyph data, the same mascot bitmap, and the same draw primitives the ESP8266 runs. Change the numbers below and watch it react exactly as the hardware would.</p>
+
+  <section class="stage">
+    <div class="device">
+      <div class="glass">
+        <canvas id="screen" width="128" height="160"></canvas>
+      </div>
+      <div class="chin">
+        <span class="led"><i></i> pwr</span>
+        <span>usb&nbsp;serial · 115200</span>
+      </div>
+    </div>
+    <p class="cap">128 × 160 · ST7735 TFT · rotation 2 &nbsp;·&nbsp; <button class="replay" id="replay" type="button">↻ replay boot</button></p>
+  </section>
+
+  <section class="panel">
+    <h2>Usage <span class="rule"></span> what the host pushes as <span style="font-family:var(--mono);color:var(--accent-ink)">@U</span></h2>
+    <div class="controls-grid">
+      <div class="ctl">
+        <div class="top"><label for="five">5-hour used</label><span class="val" id="fiveV">45%</span></div>
+        <input type="range" id="five" min="0" max="100" value="45">
+      </div>
+      <div class="ctl">
+        <div class="top"><label for="seven">Weekly used</label><span class="val" id="sevenV">64%</span></div>
+        <input type="range" id="seven" min="0" max="100" value="64">
+      </div>
+      <div class="ctl">
+        <div class="top"><label for="fmin">5-hour resets in</label><span class="val" id="fminV">52m</span></div>
+        <input type="range" id="fmin" min="0" max="300" value="52">
+      </div>
+      <div class="ctl">
+        <div class="top"><label for="whr">Weekly resets in</label><span class="val" id="whrV">3d 4h</span></div>
+        <input type="range" id="whr" min="0" max="168" value="76">
+      </div>
+      <div class="ctl">
+        <label for="tier">Subscription tier</label>
+        <input type="text" id="tier" value="Max 20x" maxlength="12" spellcheck="false">
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Sessions <span class="rule"></span> pushed as <span style="font-family:var(--mono);color:var(--accent-ink)">@S</span></h2>
+    <div class="controls-grid">
+      <div class="ctl">
+        <label>Live sessions</label>
+        <div class="stepper" role="group" aria-label="Live sessions">
+          <button type="button" data-step="total" data-d="-1" aria-label="one fewer session">–</button>
+          <output id="totalV">2</output>
+          <button type="button" data-step="total" data-d="1" aria-label="one more session">+</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label>Busy (working)</label>
+        <div class="stepper" role="group" aria-label="Busy sessions">
+          <button type="button" data-step="busy" data-d="-1" aria-label="one fewer busy">–</button>
+          <output id="busyV">2</output>
+          <button type="button" data-step="busy" data-d="1" aria-label="one more busy">+</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel wire">
+    <h2>On the wire <span class="rule"></span> the two-line contract</h2>
+    <p class="cap2">These are the exact serial lines that would produce the screen above. The firmware caches them and counts the resets down locally, so the panel stays truthful even when nothing is pushing.</p>
+    <pre id="wireU"></pre>
+    <pre id="wireS"></pre>
+  </section>
+
+  <p class="note">
+    This is the <code>usage_display</code> view recreated in a browser — not a mockup: it decodes the real <code>MASCOT</code> and boot-logo RGB565 bitmaps and the actual <code>FreeSansBold9pt7b</code> and 5×7 <code>glcdfont</code> glyphs, then draws them with ported <code>Adafruit_GFX</code> primitives on a 128×160 buffer. On the hardware, the numbers come from Claude Code's statusline payload; here they come from the controls. Percentages don't decay; the session dots fade to <em>none</em> after two minutes of silence, and busy dots breathe through the coral ramp.
+    Build the real one — about $5 of parts:
+    <a href="https://github.com/danielhadian/claude-hud">github.com/danielhadian/claude-hud</a>.
+  </p>
+</main>
+
+<script>
+const HUD = {"glcd": "AAAAAAA+W09bPj5rT2s+HD58PhwYPH48GBxXfVccHF5/XhwAGDwYAP/nw+f/ABgkGAD/59vn/zBIOgYOJil5KSZAfwUFB0B/BSU/WjznPFp/PhwcCAgcHD5/FCJ/IhRfXwBfXwYJfwF/AGaJlWpgYGBgYJSi/6KUCAR+BAgQIH4gEAgIKhwICBwqCAgeEBAQEAweDB4MMDg+ODAGDj4OBgAAAAAAAABfAAAABwAHABR/FH8UJCp/KhIjEwhkYjZJViBQAAgHAwAAHCJBAABBIhwAKhx/HCoICD4ICACAcDAACAgICAgAAGBgACAQCAQCPlFJRT4AQn9AAHJJSUlGIUFJTTMYFBJ/ECdFRUU5PEpJSTFBIREJBzZJSUk2RklJKR4AABQAAABANAAAAAgUIkEUFBQUFABBIhQIAgFZCQY+QV1ZTnwSERJ8f0lJSTY+QUFBIn9BQUE+f0lJSUF/CQkJAT5BQVFzfwgICH8AQX9BACBAQT8BfwgUIkF/QEBAQH8CHAJ/fwQIEH8+QUFBPn8JCQkGPkFRIV5/CRkpRiZJSUkyAwF/AQM/QEBAPx8gQCAfP0A4QD9jFAgUYwMEeAQDYVlJTUMAf0FBQQIECBAgAEFBQX8EAgECBEBAQEBAAAMHCAAgVFR4QH8oREQ4OERERCg4REQofzhUVFQYAAh+CQIYpKSceH8IBAR4AER9QAAgQEA9AH8QKEQAAEF/QAB8BHgEeHwIBAR4OERERDj8GCQkGBgkJBj8fAgEBAhIVFRUJAQEP0QkPEBAIHwcIEAgHDxAMEA8RCgQKERMkJCQfERkVExEAAg2QQAAAHcAAABBNggAAgECBAI8JiMmPB6hoWESOkBAIHo4VFRVWSFVVXlBIlRUeEIhVVR4QCBUVXlADB5SchI5VVVVWTlUVFRZOVVUVFgAAEV8QQACRX1CAAFFfEB9EhESffAoJSjwfFRVRQAgVFR8VHwKCX9JMklJSTI6REREOjJKSEgwOkFBIXo6QkAgeACdoKB9PUJCQj09QEBAPTwk/yQkSH5JQ2YrL/wvK/8JKfYgwIh+CQMgVFR5QQAARH1BMEhISjI4QEAiegB6CgpyfQ0ZMX0mKSkvKCYpKSkmMEhNQCA4CAgICAgICAg4LxDIrLovECg0+gAAewAACBQqFCIiFCoUCFUAVQBVqlWqVar/Vf9V/wAAAP8AEBAQ/wAUFBT/ABAQ/wD/EBDwEPAUFBT8ABQU9wD/AAD/AP8UFPQE/BQUFxAfEBAfEB8UFBQfABAQEPAAAAAAHxAQEBAfEBAQEPAQAAAA/xAQEBAQEBAQEP8QAAAA/xQAAP8A/wAAHxAXAAD8BPQUFBcQFxQU9AT0AAD/APcUFBQUFBQU9wD3FBQUFxQQEB8QHxQUFPQUEBDwEPAAAB8QHwAAAB8UAAAA/BQAAPAQ8BAQ/xD/FBQU/xQQEBAfAAAAAPAQ///////w8PDw8P///wAAAAAA//8PDw8PDzhERDhE/EpKSjR+AgIGBgJ+An4CY1VJQWM4REQ8BEB+IB4gBgJ+AgKZpeelmRwqSSocTHIBckwwSk1NMDBIeEgwvGJaRj0+SUlJAH4BAQF+KioqKipERF9EREBRSkRAQERKUUAAAP8BA+CA/wAACAhrawg2EjYkNgYPCQ8GAAAYGAAAABAQADBA/wEBAB8BAR4AGR0XEgA8PDw8AAAAAAA=", "fsbBitmap": "///+SH7v3790QBmGZ/3/MwzDM/7/mYZhkBAfH97/P4PA/B8J/P738eBAOBB8MMYgxkDGQHyAOZwBPgNjAmMEYww+CBwOAfg7g7g/AeA+Z3bj7hzzx/4/cP/0GGMcc444444YcMMGCGGDDjhxxxxxxjjjGEAhPkUoOHDn/+cOHPyc/8D8CMQjEIRiEYgAPj+d3H4/H4/H4/Hdz+PgCP/znOc5znOAPj+4/HA4HBwcHBwcD/f4PH/n5wcMDgcH5+d+PA4eHi4uTk6O//8ODg5/P5AYDef7ngcDgfH/58A+P5z8Duf738fj8d3v4+D//8Dg4GBwMDgcDA4HA4A/H+4/h+PPx/vP4fh/Pf4/AD4/vdx+Px/e/zuB+c/jwPwAB+D8AAfl4ACDx98MB4D4HwGA///AAA///ABwPwPgOH3x4IAAPj+4/HA4HBwcHA4AA4HAA/AP/B4OOAJw6WMZwhnGEcYzxjJj/nPcPAAf+AfwBwDwD4D4HYGcGcOMP+f+cGYH4HD/n/uD8H4P/z/3BuD8H4P/7/gfg/545wfgDgDgDgDgBwd48/4fgP+P/ODuDuB+B+B+B+B+DuDv/P+A///4HA4H+/3A4HA4H//4///4HA4H+/3A4HA4HA4AD4f547g+AcA4/x/gbg3jn9Dy4Pwfg/B+D////wfg/B+D8H4O//////4HBwcHBwcHB+fn53484O4c445w7g/A/g9w5w444c4O4ODg4ODg4ODg4ODg4P//+H/h/4f+H+x/s37N+zfs355+efnn55zg/h/D/H/P2fu/N+f8f4fw/g4Pgf8ePODuA/AfgPwH4DuDnjx/wPgA/5/7h/B+D8P/9/zgHAOAcA4AD4H/Hjzg7gPwH4D8B+G7j548f+D7gAj/j/zg7g7g7g7/z/zg7g7g7g7g8D8P+8fwfgH8H/A/APwdx7/h+P//xwOBwOBwOBwOBwOBwOD8H4Pwfg/B+D8H4Pwfx7/h8GBnDnDjDDDDnBmBmB+A8A8A8AYAYcO44ZxwzjzjNnGbMO2YNnwbPA8eB48Bw4DhgHDnjjnB+B+A8AcA8B+BnDnHDnDg4Pw5xxjDuDYHwHAOAcA4BwDg///A4ODwcHBweDg4H//4/+7u7u7u7u/whhCGEIQwhDCA/3d3d3d3d3/wGBw8PjZmY8P/wMw/H+44Dj+e7jue/57g4DgOA7z/vO4fh+H4fzv+7wAfP9x8DgcDgON/jwADgcDnd/u/j8fj8f3v87g+P5zcP///gcN/jwA73f+5znOc5wA7v938fj8fj+9/ncD8d/Hw4HA4He//n4/H4/H4/H44/H////53B3d3d3d3f+DgcDgcfndz8fj+dzncbjj//////u97//45+Ofjn45+Ofjn45+OcO9/+Px+Px+Px+PxwB4f5zuH4fh+Hc5/h4DvP+87h+H4fh/O/7vOA4DgOAA7v/38fj8fj+9/ncDgcDgc7/84444444A+P7j8D8P8P8f/HwBzv/c5znOecOPx+Px+Px+Px/+9wOGYZznMMw3D4HgeBwDjHZ5meZnmd7jSw88PPDzwc4BznOPweB4HgeD8c5zg4dhnOc4zDsPgeB4DAMBwOA4A/v4OHDg4cOD//zdmZm7mZmZnMP//gM5mZmd2ZmZuwHGO", "fsbGlyphs": [[0, 0, 0, 5, 0, 1], [0, 3, 13, 6, 2, -12], [5, 7, 5, 9, 1, -12], [10, 10, 12, 10, 0, -11], [25, 9, 15, 10, 1, -13], [42, 16, 13, 16, 0, -12], [68, 12, 13, 13, 1, -12], [88, 3, 5, 5, 1, -12], [90, 6, 17, 6, 1, -12], [103, 6, 17, 6, 0, -12], [116, 5, 6, 7, 1, -12], [120, 7, 8, 11, 2, -7], [127, 3, 5, 4, 1, -1], [129, 5, 2, 6, 0, -5], [131, 3, 2, 4, 1, -1], [132, 5, 13, 5, 0, -12], [141, 9, 13, 10, 1, -12], [156, 5, 13, 10, 2, -12], [165, 9, 13, 10, 1, -12], [180, 8, 13, 10, 1, -12], [193, 8, 13, 10, 2, -12], [206, 9, 13, 10, 1, -12], [221, 9, 13, 10, 1, -12], [236, 9, 13, 10, 0, -12], [251, 10, 13, 10, 0, -12], [268, 9, 13, 10, 1, -12], [283, 3, 9, 4, 1, -8], [287, 3, 12, 4, 1, -8], [292, 9, 9, 11, 1, -8], [303, 9, 6, 11, 1, -6], [310, 9, 9, 11, 1, -8], [321, 9, 13, 11, 1, -12], [336, 16, 15, 18, 0, -12], [366, 12, 13, 13, 0, -12], [386, 11, 13, 13, 1, -12], [404, 12, 13, 13, 1, -12], [424, 12, 13, 13, 1, -12], [444, 9, 13, 12, 1, -12], [459, 9, 13, 11, 1, -12], [474, 11, 13, 14, 1, -12], [492, 11, 13, 13, 1, -12], [510, 3, 13, 6, 1, -12], [515, 8, 13, 10, 1, -12], [528, 12, 13, 13, 1, -12], [548, 8, 13, 11, 1, -12], [561, 14, 13, 16, 1, -12], [584, 11, 13, 14, 1, -12], [602, 13, 13, 14, 1, -12], [624, 11, 13, 12, 1, -12], [642, 13, 14, 14, 1, -12], [665, 12, 13, 13, 1, -12], [685, 11, 13, 12, 1, -12], [703, 9, 13, 12, 2, -12], [718, 11, 13, 13, 1, -12], [736, 12, 13, 12, 0, -12], [756, 17, 13, 17, 0, -12], [784, 12, 13, 12, 0, -12], [804, 11, 13, 12, 1, -12], [822, 9, 13, 11, 1, -12], [837, 4, 17, 6, 1, -12], [846, 5, 13, 5, 0, -12], [855, 4, 17, 6, 0, -12], [864, 8, 8, 11, 1, -12], [872, 10, 1, 10, 0, 4], [874, 3, 2, 5, 0, -12], [875, 10, 10, 10, 1, -9], [888, 10, 13, 11, 1, -12], [905, 9, 10, 10, 1, -9], [917, 9, 13, 11, 1, -12], [932, 9, 10, 10, 1, -9], [944, 5, 13, 6, 1, -12], [953, 9, 14, 11, 1, -9], [969, 9, 13, 11, 1, -12], [984, 3, 13, 5, 1, -12], [989, 4, 17, 5, 0, -12], [998, 9, 13, 10, 1, -12], [1013, 3, 13, 5, 1, -12], [1018, 14, 10, 16, 1, -9], [1036, 9, 10, 11, 1, -9], [1048, 10, 10, 11, 1, -9], [1061, 10, 14, 11, 1, -9], [1079, 9, 14, 11, 1, -9], [1095, 6, 10, 7, 1, -9], [1103, 9, 10, 10, 1, -9], [1115, 5, 12, 6, 1, -11], [1123, 9, 10, 11, 1, -9], [1135, 10, 10, 10, 0, -9], [1148, 14, 10, 14, 0, -9], [1166, 10, 10, 10, 0, -9], [1179, 10, 14, 10, 0, -9], [1197, 8, 10, 9, 1, -9], [1207, 4, 17, 7, 1, -12], [1216, 1, 17, 5, 2, -12], [1219, 4, 17, 7, 2, -12], [1228, 8, 2, 9, 0, -4]], "fsbFirst": 32, "fsbLast": 126, "fsbYAdv": 22, "mascotW": 30, "mascotH": 30, "mascot565": "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", "logoW": 96, "logoH": 96, "logo565": "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"};
+
+/* ---- decode embedded data ------------------------------------------------ */
+function b64(s){const bin=atob(s), a=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++)a[i]=bin.charCodeAt(i); return a;}
+const GLCD = b64(HUD.glcd);                 // 256 * 5 column-bytes
+const FSB_BM = b64(HUD.fsbBitmap);          // FreeSansBold9pt bitmap stream
+const FSB_G  = HUD.fsbGlyphs;               // [ [bo,w,h,xadv,dx,dy], ... ]
+const FSB_FIRST = HUD.fsbFirst;
+const MASCOT = { w:HUD.mascotW, h:HUD.mascotH, px:b64(HUD.mascot565) };
+const LOGO   = { w:HUD.logoW,   h:HUD.logoH,   px:b64(HUD.logo565) };
+
+/* ---- RGB565 -> [r,g,b], matching the panel's colour expansion ------------ */
+function exp565(v){
+  const r5=(v>>11)&0x1F, g6=(v>>5)&0x3F, b5=v&0x1F;
+  return [ (r5<<3)|(r5>>2), (g6<<2)|(g6>>4), (b5<<3)|(b5>>2) ];
+}
+const C = {
+  FIG:   exp565(0xF75C),   // warm white figures      (COL_FIG)
+  DIM:   exp565(0x8410),   // captions / reset lines   (COL_DIM)
+  EDGE:  exp565(0x39C7),   // meter outline            (COL_EDGE)
+  TRACK: exp565(0x18E3),   // empty meter / divider    (COL_TRACK)
+  CREST: exp565(0xFDF4),   // fill highlight           (COL_CREST)
+  BRAND: exp565(0xDBAA),   // coral                    (PANEL_BRAND)
+  BLACK: [0,0,0],
+};
+const RAMP = [0x7A06,0xAAE8,0xDBAA,0xF4AF,0xFDF4].map(exp565);   // busy-dot pulse
+
+/* ---- framebuffer: exact Adafruit_GFX primitives on a 128x160 buffer ------ */
+const W=128, H=160;
+const cv  = document.getElementById('screen');
+const ctx = cv.getContext('2d');
+const img = ctx.createImageData(W,H);
+const fb  = img.data;
+
+function clear(){ for(let i=0;i<fb.length;i+=4){ fb[i]=0; fb[i+1]=0; fb[i+2]=0; fb[i+3]=255; } }
+function px(x,y,c){ x|=0; y|=0; if(x<0||x>=W||y<0||y>=H) return; const o=(y*W+x)<<2; fb[o]=c[0]; fb[o+1]=c[1]; fb[o+2]=c[2]; fb[o+3]=255; }
+function hline(x,y,w,c){ for(let i=0;i<w;i++) px(x+i,y,c); }
+function vline(x,y,h,c){ for(let i=0;i<h;i++) px(x,y+i,c); }
+function fillRect(x,y,w,h,c){ for(let j=0;j<h;j++) hline(x,y+j,w,c); }
+
+function drawCircleHelper(x0,y0,r,corner,c){
+  let f=1-r, ddx=1, ddy=-2*r, x=0, y=r;
+  while(x<y){
+    if(f>=0){ y--; ddy+=2; f+=ddy; }
+    x++; ddx+=2; f+=ddx;
+    if(corner&0x4){ px(x0+x,y0+y,c); px(x0+y,y0+x,c); }
+    if(corner&0x2){ px(x0+x,y0-y,c); px(x0+y,y0-x,c); }
+    if(corner&0x8){ px(x0-y,y0+x,c); px(x0-x,y0+y,c); }
+    if(corner&0x1){ px(x0-y,y0-x,c); px(x0-x,y0-y,c); }
+  }
+}
+function drawCircle(x0,y0,r,c){
+  let f=1-r, ddx=1, ddy=-2*r, x=0, y=r;
+  px(x0,y0+r,c); px(x0,y0-r,c); px(x0+r,y0,c); px(x0-r,y0,c);
+  while(x<y){
+    if(f>=0){ y--; ddy+=2; f+=ddy; }
+    x++; ddx+=2; f+=ddx;
+    px(x0+x,y0+y,c); px(x0-x,y0+y,c); px(x0+x,y0-y,c); px(x0-x,y0-y,c);
+    px(x0+y,y0+x,c); px(x0-y,y0+x,c); px(x0+y,y0-x,c); px(x0-y,y0-x,c);
+  }
+}
+function fillCircleHelper(x0,y0,r,corners,delta,c){
+  let f=1-r, ddx=1, ddy=-2*r, x=0, y=r, pxx=0, pyy=r;
+  delta++;
+  while(x<y){
+    if(f>=0){ y--; ddy+=2; f+=ddy; }
+    x++; ddx+=2; f+=ddx;
+    if(x < y+1){
+      if(corners&1) vline(x0+x, y0-y, 2*y+delta, c);
+      if(corners&2) vline(x0-x, y0-y, 2*y+delta, c);
+    }
+    if(y!==pyy){
+      if(corners&1) vline(x0+pyy, y0-pxx, 2*pxx+delta, c);
+      if(corners&2) vline(x0-pyy, y0-pxx, 2*pxx+delta, c);
+      pyy=y;
+    }
+    pxx=x;
+  }
+}
+function fillCircle(x0,y0,r,c){ vline(x0, y0-r, 2*r+1, c); fillCircleHelper(x0,y0,r,3,0,c); }
+function drawRoundRect(x,y,w,h,r,c){
+  const m=(w<h?w:h)>>1; if(r>m) r=m;
+  hline(x+r,y,w-2*r,c); hline(x+r,y+h-1,w-2*r,c);
+  vline(x,y+r,h-2*r,c); vline(x+w-1,y+r,h-2*r,c);
+  drawCircleHelper(x+r,y+r,r,1,c);
+  drawCircleHelper(x+w-r-1,y+r,r,2,c);
+  drawCircleHelper(x+w-r-1,y+h-r-1,r,4,c);
+  drawCircleHelper(x+r,y+h-r-1,r,8,c);
+}
+function fillRoundRect(x,y,w,h,r,c){
+  const m=(w<h?w:h)>>1; if(r>m) r=m;
+  fillRect(x+r,y,w-2*r,h,c);
+  fillCircleHelper(x+w-r-1,y+r,r,1,h-2*r-1,c);
+  fillCircleHelper(x+r,y+r,r,2,h-2*r-1,c);
+}
+
+/* ---- bitmaps (RGB565 big-endian, opaque) --------------------------------- */
+function blit565(x,y,bm){
+  for(let i=0;i<bm.w*bm.h;i++){
+    const word=(bm.px[2*i]<<8)|bm.px[2*i+1];
+    px(x + i%bm.w, y + (i/bm.w|0), exp565(word));
+  }
+}
+
+/* ---- text: 5x7 classic (cursor y = TOP) ---------------------------------- */
+function classicChar(x,y,code,c){
+  const o=code*5;
+  for(let col=0;col<5;col++){ const bits=GLCD[o+col]; for(let row=0;row<8;row++) if(bits&(1<<row)) px(x+col,y+row,c); }
+  return 6;
+}
+function classicText(x,y,s,c){ for(const ch of s) x+=classicChar(x,y,ch.charCodeAt(0),c); return x; }
+
+/* ---- text: FreeSansBold9pt custom font (cursor y = BASELINE) -------------- */
+function gfxChar(x,y,code,c){
+  if(code<FSB_FIRST || code>=FSB_FIRST+FSB_G.length) return 0;
+  const g=FSB_G[code-FSB_FIRST]; let bo=g[0], w=g[1], h=g[2], xa=g[3], dx=g[4], dy=g[5];
+  let bits=0, bitpos=0;
+  for(let yy=0;yy<h;yy++) for(let xx=0;xx<w;xx++){
+    if(bitpos===0){ bits=FSB_BM[bo++]; bitpos=8; }
+    bitpos--; if(bits&(1<<bitpos)) px(x+dx+xx, y+dy+yy, c);
+  }
+  return xa;
+}
+function gfxText(x,y,s,c){ for(const ch of s) x+=gfxChar(x,y,ch.charCodeAt(0),c); return x; }
+function gfxWidth(s){
+  let x=0, minx=1e9, maxx=-1e9;
+  for(const ch of s){ const code=ch.charCodeAt(0);
+    if(code<FSB_FIRST || code>=FSB_FIRST+FSB_G.length) continue;
+    const g=FSB_G[code-FSB_FIRST], w=g[1], xa=g[3], dx=g[4];
+    if(w){ const x1=x+dx, x2=x1+w-1; if(x1<minx)minx=x1; if(x2>maxx)maxx=x2; }
+    x+=xa;
+  }
+  return maxx<minx ? 0 : maxx-minx+1;
+}
+
+/* ==== layout constants (verbatim from usage_display.ino) =================== */
+const MARK_X=5, MARK_Y=3, HDR_H=30;
+const TIER_H=15, TIER_Y=3+((30-15)>>1);
+const BAR_X=8, BAR_W=W-2*BAR_X, RIGHT_X=BAR_X+BAR_W;
+const TRACK_H=10, TRACK_R=5;
+const B5={numY:50,trackY:58,resetY:70}, B7={numY:96,trackY:104,resetY:116};
+const DIV_Y=H-28, SESS_Y=H-15, DOT_X0=66, DOT_Y=H-12, DOT_R=3, DOT_SP=9;
+const DOT_MAX=Math.floor((W-DOT_X0-8)/DOT_SP);
+
+function pulseColor(phase){
+  const t=0.5+0.5*Math.sin(phase*0.9);
+  let idx=Math.round(t*4); if(idx<0)idx=0; if(idx>4)idx=4;
+  return RAMP[idx];
+}
+function formatRemaining(sec){
+  if(sec>=86400) return `${Math.floor(sec/86400)}d ${Math.floor((sec%86400)/3600)}h`;
+  if(sec>=3600)  return `${Math.floor(sec/3600)}h ${Math.floor((sec%3600)/60)}m`;
+  return `${Math.floor(sec/60)}m`;
+}
+
+/* ---- drawing the usage view --------------------------------------------- */
+function drawTier(sub){
+  if(!sub) return;
+  const tw=sub.length*6-1, pillW=tw+12, x=W-6-pillW;
+  drawRoundRect(x,TIER_Y,pillW,TIER_H,TIER_H>>1,C.BRAND);
+  classicText(x+6, TIER_Y+((TIER_H-7)>>1)+1, sub, C.BRAND);
+}
+function drawBar(b,label,pct,reset,valid){
+  classicText(BAR_X, b.numY-6, label, C.DIM);
+  const num=String(pct);
+  const wP=gfxWidth("%"), wN=gfxWidth(num);
+  gfxText(RIGHT_X-wP-wN-2, b.numY, num, C.FIG);
+  gfxText(RIGHT_X-wP,      b.numY, "%", C.BRAND);
+  drawRoundRect(BAR_X, b.trackY, BAR_W, TRACK_H, TRACK_R, C.EDGE);
+  fillRoundRect(BAR_X+1, b.trackY+1, BAR_W-2, TRACK_H-2, TRACK_R-1, C.TRACK);
+  const fillW=Math.floor(pct*(BAR_W-2)/100);
+  if(fillW>0){
+    fillRoundRect(BAR_X+1, b.trackY+1, fillW, TRACK_H-2, TRACK_R-1, C.BRAND);
+    if(fillW>3) hline(BAR_X+2, b.trackY+2, fillW-2, C.CREST);
+  }
+  if(valid && reset) classicText(BAR_X, b.resetY, "resets "+reset, C.DIM);
+  else if(!valid)    classicText(BAR_X, b.resetY, "waiting for data", C.DIM);
+}
+function drawSessions(st, dotColor){
+  hline(BAR_X, DIV_Y, BAR_W, C.TRACK);
+  classicText(BAR_X, SESS_Y, "SESSIONS", C.DIM);
+  const total = st.sessValid ? st.total : 0;
+  const busy  = st.sessValid ? st.busy  : 0;
+  const shown = Math.min(total, DOT_MAX);
+  let cx=DOT_X0;
+  for(let i=0;i<shown;i++){
+    if(i<busy) fillCircle(cx,DOT_Y,DOT_R, dotColor);
+    else       drawCircle(cx,DOT_Y,DOT_R, C.DIM);
+    cx+=DOT_SP;
+  }
+  if(!st.sessValid)      classicText(DOT_X0-DOT_R, SESS_Y, "connecting", C.DIM);
+  else if(total===0)     classicText(DOT_X0-DOT_R, SESS_Y, "none", C.DIM);
+  else if(total>DOT_MAX) classicText(cx-1, SESS_Y, "+", C.DIM);
+}
+
+function render(st, phase, reduced){
+  clear();
+  if(st.mode==='boot'){
+    blit565((W-LOGO.w>>1), (H-LOGO.h>>1), LOGO);
+    ctx.putImageData(img,0,0); return;
+  }
+  blit565(MARK_X, MARK_Y, MASCOT);
+  drawTier(st.valid ? st.sub : "");
+  drawBar(B5,"5-HOUR", st.five,  st.fiveStr,  st.valid);
+  drawBar(B7,"WEEKLY", st.seven, st.sevenStr, st.valid);
+  const dot = (reduced || st.busy===0) ? C.BRAND : pulseColor(phase);
+  drawSessions(st, dot);
+  ctx.putImageData(img,0,0);
+}
+
+/* ==== state + interaction ================================================= */
+const reduced = matchMedia('(prefers-reduced-motion:reduce)').matches;
+const now = ()=>performance.now();
+const state = {
+  mode:'boot', valid:true,
+  five:45, seven:64, sub:"Max 20x",
+  // seed a touch above the 52m / 3d-4h marks so the panel opens on those exact
+  // values (76h is right on the 3d-4h boundary) — the live countdown takes over
+  // the moment the resets are touched, exactly as the firmware's tickResets does.
+  fiveSec:52*60+45,   fiveBase:now(),  fiveStr:"52m",
+  sevenSec:76*3600+2100, sevenBase:now(), sevenStr:"3d 4h",
+  sessValid:true, total:2, busy:2,
+};
+let phase=0, dirty=true, lastF=0;
+
+function remaining(sec, base){ return Math.max(0, sec - Math.floor((now()-base)/1000)); }
+
+function refreshResets(){
+  if(!state.valid) return;
+  const f=formatRemaining(remaining(state.fiveSec, state.fiveBase));
+  if(f!==state.fiveStr){ state.fiveStr=f; dirty=true; }
+  const s=formatRemaining(remaining(state.sevenSec, state.sevenBase));
+  if(s!==state.sevenStr){ state.sevenStr=s; dirty=true; }
+}
+
+function updateWire(){
+  const fs=state.valid?remaining(state.fiveSec,state.fiveBase):0;
+  const ss=state.valid?remaining(state.sevenSec,state.sevenBase):0;
+  document.getElementById('wireU').innerHTML =
+    `<span class="pre">@U</span><span class="k">|</span>five<span class="k">=</span><span class="v">${state.five}</span>`+
+    `<span class="k">|</span>seven<span class="k">=</span><span class="v">${state.seven}</span>`+
+    `<span class="k">|</span>sub<span class="k">=</span><span class="v">${esc(state.sub)}</span>`+
+    `<span class="k">|</span>five_s<span class="k">=</span><span class="v">${fs}</span>`+
+    `<span class="k">|</span>seven_s<span class="k">=</span><span class="v">${ss}</span>`;
+  document.getElementById('wireS').innerHTML =
+    `<span class="pre">@S</span><span class="k">|</span>sessions<span class="k">=</span><span class="v">${state.total}</span>`+
+    `<span class="k">|</span>busy<span class="k">=</span><span class="v">${state.busy}</span>`;
+}
+function esc(s){ return s.replace(/[&<>]/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m])); }
+
+/* ---- animation loop ------------------------------------------------------ */
+function loop(t){
+  requestAnimationFrame(loop);
+  if(t-lastF < 33) return; lastF=t;
+  refreshResets();
+  const animating = state.mode==='usage' && state.sessValid && state.busy>0 && !reduced;
+  if(dirty || animating){
+    if(animating) phase = (phase + 0.15) % (2*Math.PI/0.9);
+    render(state, phase, reduced);
+    dirty=false;
+  }
+}
+
+/* ---- boot splash then the usage view ------------------------------------- */
+function bootThenUsage(){
+  state.mode = reduced ? 'usage' : 'boot';
+  dirty=true;
+  if(!reduced) setTimeout(()=>{ state.mode='usage'; dirty=true; }, 1600);
+}
+
+/* ---- wire up the controls ------------------------------------------------ */
+function setFill(el){ el.style.setProperty('--fill', ((el.value-el.min)/(el.max-el.min)*100)+'%'); }
+
+const five=document.getElementById('five'), seven=document.getElementById('seven'),
+      fmin=document.getElementById('fmin'), whr=document.getElementById('whr'),
+      tier=document.getElementById('tier');
+
+five.oninput = ()=>{ state.five=+five.value; document.getElementById('fiveV').textContent=five.value+'%'; setFill(five); dirty=true; updateWire(); };
+seven.oninput= ()=>{ state.seven=+seven.value; document.getElementById('sevenV').textContent=seven.value+'%'; setFill(seven); dirty=true; updateWire(); };
+fmin.oninput = ()=>{ state.fiveSec=(+fmin.value)*60; state.fiveBase=now(); state.fiveStr=formatRemaining(state.fiveSec);
+                     document.getElementById('fminV').textContent=state.fiveStr; setFill(fmin); dirty=true; updateWire(); };
+whr.oninput  = ()=>{ state.sevenSec=(+whr.value)*3600; state.sevenBase=now(); state.sevenStr=formatRemaining(state.sevenSec);
+                     document.getElementById('whrV').textContent=state.sevenStr; setFill(whr); dirty=true; updateWire(); };
+tier.oninput = ()=>{ state.sub=tier.value.slice(0,12); dirty=true; updateWire(); };
+
+document.querySelectorAll('.stepper button').forEach(btn=>{
+  btn.onclick = ()=>{
+    const key=btn.dataset.step, d=+btn.dataset.d;
+    if(key==='total'){ state.total=Math.max(0,Math.min(12, state.total+d)); if(state.busy>state.total) state.busy=state.total; }
+    else             { state.busy =Math.max(0,Math.min(state.total, state.busy+d)); }
+    document.getElementById('totalV').textContent=state.total;
+    document.getElementById('busyV').textContent=state.busy;
+    dirty=true; updateWire();
+  };
+});
+document.getElementById('replay').onclick = bootThenUsage;
+
+/* ---- go ------------------------------------------------------------------ */
+[five,seven,fmin,whr].forEach(setFill);
+updateWire();
+bootThenUsage();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
