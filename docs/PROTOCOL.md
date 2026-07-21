@@ -78,9 +78,11 @@ countdowns already stay honest.)
   and **silence** when none is — the statusline is the data source, so nothing
   runs when nothing is open.
 - The host may reopen the port at any time (which auto-resets many dev
-  boards). Immediately after opening, it **replays the last-known `@U` and
-  `@S`** so a freshly reset device shows data instead of a blank screen.
-  Render whatever arrives, whenever it arrives; never require a handshake.
+  boards). Shortly after opening — it waits ~1.5 s first, so a just-reset
+  board is done booting and doesn't lose the bytes — it **replays the
+  last-known `@U` and `@S`** so a freshly reset device shows data instead of
+  a blank screen. Render whatever arrives, whenever it arrives; never require
+  a handshake.
 - Before the first line arrives, show an honest "waiting for data" state.
 
 ## Example session

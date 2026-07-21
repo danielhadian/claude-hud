@@ -14,9 +14,19 @@ import (
 	"time"
 )
 
-const version = "1.2.0"
+const version = "1.3.0"
 
 const spawnCooldown = 60 * time.Second
+
+// bootSettle is how long runHolder waits after opening the port before replaying
+// the cache. Opening resets the reference ESP8266 (measured 10/10), which then
+// spends ~1.8s in setup() delays (delay(300)+delay(1500)) before its first
+// pumpSerial(); anything sent during the boot ROM that follows the reset (the
+// first few hundred ms, UART RX dead) is lost. 1.5s clears that window with wide
+// margin while the firmware is still mid-setup, so its RX FIFO holds the replay
+// until loop() drains it. Other boards can differ, but a small over-wait only
+// delays the first repaint; too little silently loses it. docs/HARDWARE.md.
+const bootSettle = 1500 * time.Millisecond
 
 func stateDir() string { return filepath.Join(ConfigDir(), "sessions") }
 
@@ -145,6 +155,19 @@ func runStatusline() {
 	}
 }
 
+// replayCache pushes the last-known @U/@S lines to a freshly opened port so a
+// reconnected/rebooted board repaints immediately instead of sitting on
+// "connecting" until the next live push. It waits `settle` FIRST: OpenSink just
+// reset the auto-reset board (every open resets it, measured 10/10 -
+// docs/HARDWARE.md), and bytes sent while it is still in its boot ROM never
+// reach the sketch's UART. Waiting out the boot is the whole point.
+func replayCache(sink Sink, dir string, settle time.Duration) {
+	time.Sleep(settle) // let the just-reset board finish booting before we send
+	for _, l := range loadCache(dir) {
+		_ = fullWrite(sink, []byte(l+"\n"))
+	}
+}
+
 func runHolder() {
 	// Take the lock BEFORE opening the port. The flock is the primary guard and
 	// must be taken before FindPort/OpenSink so it covers the detect->open window
@@ -169,15 +192,12 @@ func runHolder() {
 	}
 
 	// Opening the port just reset the board, so it has no data and is showing
-	// "waiting for data". Replay the last-known values immediately rather than
-	// leaving it blank until the next statusline invocation — on a plug-in with
-	// no Claude Code session open, that next invocation may never come.
-	// loadCache strips the newline; the firmware's pumpSerial only parses on
-	// one, so it must go back.
+	// "waiting for data" / "connecting". Replay the last-known values so the
+	// panel repaints without waiting for the next statusline push — on a
+	// reconnect/reboot with no active Claude Code turn, that push may not come
+	// for a while. replayCache waits out the board's boot first (see there).
 	dir := ConfigDir()
-	for _, l := range loadCache(dir) {
-		_ = fullWrite(sink, []byte(l+"\n"))
-	}
+	replayCache(sink, dir, bootSettle)
 
 	_ = Serve(SocketPath(), &cachingSink{Sink: sink, dir: dir}, 5*time.Minute)
 }

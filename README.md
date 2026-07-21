@@ -246,8 +246,10 @@ invocations hand it lines over a local socket. The holder:
   where two holders would interleave writes to the device
 - starts on demand when nothing is listening (rate-limited to one attempt per
   60 s, so a machine with no device attached doesn't fork endlessly)
-- **replays the last-known values the instant it opens the port**, so a
-  just-reset device shows data immediately instead of "waiting for data"
+- **replays the last-known values once the just-reset device has finished
+  booting** (~1.5 s after opening — bytes sent while an auto-reset board is
+  still in its boot ROM are simply lost), so it repaints promptly instead of
+  sitting on "waiting for data"
 - exits when a write fails (device unplugged) or after 5 minutes idle,
   releasing the port for reflashing
 

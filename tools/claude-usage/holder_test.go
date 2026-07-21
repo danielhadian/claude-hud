@@ -234,6 +234,36 @@ func TestServeExitsOnSinkWriteError(t *testing.T) {
 	}
 }
 
+// TestReplayCacheWaitsForBoardBoot proves the holder does not fire the cached
+// @U/@S lines the instant it opens the port. Opening resets the auto-reset board
+// (measured 10/10, docs/HARDWARE.md); bytes sent while it is still in its boot
+// ROM never reach the sketch, so an immediate replay is lost and the panel stays
+// on "connecting" until the next live push. replayCache must wait out the boot,
+// THEN send the real cached values, so a reconnect/reboot repaints promptly.
+func TestReplayCacheWaitsForBoardBoot(t *testing.T) {
+	dir := t.TempDir()
+	if err := saveCache(dir, "@U|five=26|seven=31|sub=Max 20x\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveCache(dir, "@S|sessions=2|busy=1\n"); err != nil {
+		t.Fatal(err)
+	}
+	sink := &fakeSink{}
+	settle := 60 * time.Millisecond
+
+	start := time.Now()
+	replayCache(sink, dir, settle)
+	elapsed := time.Since(start)
+
+	if elapsed < settle {
+		t.Fatalf("replayCache sent after %v; must wait >= %v for the just-reset board to boot", elapsed, settle)
+	}
+	want := "@U|five=26|seven=31|sub=Max 20x\n@S|sessions=2|busy=1\n"
+	if got := sink.String(); got != want {
+		t.Fatalf("replayCache sent %q; want the cached lines %q", got, want)
+	}
+}
+
 func waitForSocket(t *testing.T, sock string) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
