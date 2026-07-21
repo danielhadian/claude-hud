@@ -14,6 +14,7 @@
  * ========================================================================== */
 
 #include <Panel.h>
+#include <ESP8266WiFi.h>
 #include <math.h>
 #include "mascot.h"
 #include "logo_boot.h"
@@ -21,7 +22,7 @@
 
 static const uint16_t COL_FIG = 0xF75C;   // warm white for the big figures
 
-#define FIRMWARE_VERSION "2.2.0"
+#define FIRMWARE_VERSION "2.2.1"
 
 /* Cap received reset seconds well past any real window (weekly ≈ 7 days). A
  * negative or garbage value on a stray line would otherwise strtoul-wrap to
@@ -435,6 +436,12 @@ static void pumpSerial() {
 }
 
 void setup() {
+  /* Nothing here uses the radio, but the core boots with it powered — where it
+   * is the board's largest single draw, and its current spikes are the #1
+   * brownout cause (docs/HARDWARE.md §7). Power it down before anything else. */
+  WiFi.mode(WIFI_OFF);
+  WiFi.forceSleepBegin();
+
   Serial.begin(115200);
   delay(300);
   Serial.println(F("\n\nusage_display " FIRMWARE_VERSION));
