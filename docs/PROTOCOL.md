@@ -51,6 +51,8 @@ Devices MUST:
 
 `five`/`five_s` travel together, as do `seven`/`seven_s` — but treat each key
 independently and defensively (clamp percents, cap absurd second counts).
+Bound `sub` too, to whatever fits your display — the reference firmware keeps
+the first 12 characters, which covers every current plan label.
 
 **Count the reset times down locally.** The host sends seconds-remaining
 snapshots, not formatted strings, precisely so the device can keep the
