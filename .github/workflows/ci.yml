@@ -38,6 +38,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: arduino/setup-arduino-cli@v2
+      # The esp8266 core is a multi-hundred-MB download; cache it and the
+      # libraries between runs. `make deps` doesn't pin library versions, so
+      # bump the -v1 in the key to deliberately pick up new releases.
+      - name: cache arduino core and libraries
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.arduino15
+            ~/Arduino/libraries
+          key: arduino-v1-${{ runner.os }}-${{ hashFiles('firmware/Makefile') }}
       - name: install esp8266 core and libraries
         working-directory: firmware
         run: make deps ACLI=arduino-cli
