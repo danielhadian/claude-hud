@@ -53,7 +53,16 @@ func saveCache(dir, line string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(cachePath(dir), []byte(strings.Join(out, "\n")+"\n"), 0o644)
+	// Write-then-rename, as RecordSession and MergeUsage do. This file is
+	// rewritten on every line the holder forwards (~every 10s), so a crash or
+	// power loss mid-write is not hypothetical; a torn last.txt would feed the
+	// board a truncated @U on its next replay. Rename is atomic, so a reader
+	// sees either the old pair or the new one, never half a line.
+	tmp := cachePath(dir) + ".tmp"
+	if err := os.WriteFile(tmp, []byte(strings.Join(out, "\n")+"\n"), 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, cachePath(dir))
 }
 
 // loadCache never fails hard: a missing or corrupt file yields an empty
