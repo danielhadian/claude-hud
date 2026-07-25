@@ -6,6 +6,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,7 +15,12 @@ import (
 	"time"
 )
 
-const version = "1.3.0"
+const version = "1.4.0"
+
+// defaultTier is the label assumed when --install is given none and none is
+// stored. The tier is not in the statusline payload (see CLAUDE.md), so it can
+// only ever come from the user.
+const defaultTier = "Max 20x"
 
 const spawnCooldown = 60 * time.Second
 
@@ -55,11 +61,15 @@ func main() {
 			runHolder()
 			return
 		case "--install":
-			tier := ""
-			if len(os.Args) > 2 {
-				tier = os.Args[2]
+			tier, force := "", false
+			for _, a := range os.Args[2:] {
+				if a == "--force" {
+					force = true
+				} else if tier == "" {
+					tier = a
+				}
 			}
-			runInstall(tier)
+			runInstall(tier, force)
 			return
 		case "--version":
 			fmt.Println("claude-usage", version)
@@ -83,6 +93,7 @@ const usageText = `claude-usage - live Claude usage on a hardware display, fed b
 
 usage:
   claude-usage --install [tier]   register as Claude Code's statusline (tier e.g. "Pro", "Max 5x"; default "Max 20x")
+                        --force   replace a statusline command written by something else (refused without it)
   claude-usage --version          print the version
   claude-usage --hold             hold the serial port and forward lines (started automatically; not for manual use)
   claude-usage                    statusline mode: read the payload on stdin, print the line, push to the device
@@ -202,7 +213,19 @@ func runHolder() {
 	_ = Serve(SocketPath(), &cachingSink{Sink: sink, dir: dir}, 5*time.Minute)
 }
 
-func runInstall(tier string) {
+// tierOrDefault is the label --install would store for tier, used in the
+// suggested --force command line so copy-pasting it preserves the user's tier.
+func tierOrDefault(tier string) string {
+	if tier != "" {
+		return tier
+	}
+	if cfg := LoadConfig(ConfigDir()); cfg.Tier != "" {
+		return cfg.Tier
+	}
+	return defaultTier
+}
+
+func runInstall(tier string, force bool) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "cannot find home dir:", err)
@@ -214,21 +237,36 @@ func runInstall(tier string) {
 		os.Exit(1)
 	}
 	settings := filepath.Join(home, ".claude", "settings.json")
-	if err := InstallStatusLine(settings, exe); err != nil {
-		fmt.Fprintln(os.Stderr, "install failed:", err)
-		os.Exit(1)
+	registered := true
+	if err := InstallStatusLine(settings, exe, force); err != nil {
+		var custom *ErrCustomStatusLine
+		if !errors.As(err, &custom) {
+			fmt.Fprintln(os.Stderr, "install failed:", err)
+			os.Exit(1)
+		}
+		// Not a failure: the user has their own status line, which very often
+		// already pipes the payload through this binary. Leave it alone and say
+		// so, rather than silently replacing it with the bare path.
+		registered = false
+		fmt.Println("! statusLine left unchanged - settings.json has a command we did not write:")
+		fmt.Printf("    %s\n", custom.Command)
+		fmt.Printf("  If that wrapper already feeds the payload to this binary, you are done.\n"+
+			"  To replace it with the bare binary, re-run with --force:\n"+
+			"    %s --install --force %q\n", exe, tierOrDefault(tier))
 	}
 	cfg := LoadConfig(ConfigDir())
 	if tier != "" {
 		cfg.Tier = tier // explicit --install argument wins
 	} else if cfg.Tier == "" {
-		cfg.Tier = "Max 20x" // not in the payload; see the message below to change
+		cfg.Tier = defaultTier // not in the payload; see the message below to change
 	}
 	if err := SaveConfig(ConfigDir(), cfg); err != nil {
 		fmt.Fprintln(os.Stderr, "config save failed:", err)
 		os.Exit(1)
 	}
-	fmt.Println("✓ statusLine registered ->", exe)
+	if registered {
+		fmt.Println("✓ statusLine registered ->", exe)
+	}
 	fmt.Printf("✓ tier label: %q  (change: claude-usage --install \"Pro\", or edit %s)\n",
 		cfg.Tier, filepath.Join(ConfigDir(), "config.json"))
 	fmt.Println("✓ done - open (or continue) any Claude Code session and the panel updates within ~10s")

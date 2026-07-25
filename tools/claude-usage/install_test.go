@@ -2,10 +2,100 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+// statusCommand reads back the registered statusLine command, failing the test
+// if settings.json is not shaped as expected.
+func statusCommand(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	sl, ok := got["statusLine"].(map[string]any)
+	if !ok {
+		t.Fatalf("no statusLine block: %v", got)
+	}
+	cmd, _ := sl["command"].(string)
+	return cmd
+}
+
+// A user's own status line often wraps this binary to add their shell prompt.
+// Replacing it with the bare path destroys that, and the loss is silent, so
+// --install must refuse and leave the file byte-for-byte alone.
+func TestInstallPreservesForeignStatusLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	orig := []byte(`{"statusLine":{"type":"command","command":"bash /home/u/.claude/statusline.sh"},"theme":"dark"}`)
+	if err := os.WriteFile(path, orig, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := InstallStatusLine(path, "/opt/claude-usage", false)
+	var custom *ErrCustomStatusLine
+	if !errors.As(err, &custom) {
+		t.Fatalf("want ErrCustomStatusLine, got %v", err)
+	}
+	if custom.Command != "bash /home/u/.claude/statusline.sh" {
+		t.Errorf("error should carry the command it refused to replace, got %q", custom.Command)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(orig) {
+		t.Fatalf("settings.json was modified despite the refusal:\n got %s\nwant %s", got, orig)
+	}
+}
+
+func TestInstallForceReplacesForeignStatusLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(path, []byte(`{"statusLine":{"type":"command","command":"my-own-thing"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := InstallStatusLine(path, "/opt/claude-usage", true); err != nil {
+		t.Fatal(err)
+	}
+	if cmd := statusCommand(t, path); cmd != "/opt/claude-usage" {
+		t.Errorf("--force should replace the command, got %q", cmd)
+	}
+}
+
+// Re-running --install after moving the binary is the normal upgrade path, and
+// a wrapper that already names the binary is ours to update too: neither should
+// need --force.
+func TestInstallUpdatesOwnRegistrationWithoutForce(t *testing.T) {
+	for name, existing := range map[string]string{
+		"bare path": "/opt/claude-usage",
+		"wrapper":   "bash -c '/opt/claude-usage | tee'",
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "settings.json")
+			blob := `{"statusLine":{"type":"command","command":` + strconvQuote(existing) + `}}`
+			if err := os.WriteFile(path, []byte(blob), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := InstallStatusLine(path, "/opt/claude-usage", false); err != nil {
+				t.Fatalf("should update without --force, got %v", err)
+			}
+			if cmd := statusCommand(t, path); cmd != "/opt/claude-usage" {
+				t.Errorf("command not updated, got %q", cmd)
+			}
+		})
+	}
+}
+
+func strconvQuote(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
 
 func TestInstallPreservesExistingSettings(t *testing.T) {
 	dir := t.TempDir()
@@ -13,7 +103,7 @@ func TestInstallPreservesExistingSettings(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"theme":"dark","env":{"A":"1"}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := InstallStatusLine(path, "/opt/claude-usage"); err != nil {
+	if err := InstallStatusLine(path, "/opt/claude-usage", false); err != nil {
 		t.Fatal(err)
 	}
 	var got map[string]any
@@ -41,7 +131,7 @@ func TestInstallPreservesExistingSettings(t *testing.T) {
 
 func TestInstallCreatesFileWhenMissing(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
-	if err := InstallStatusLine(path, "/opt/claude-usage"); err != nil {
+	if err := InstallStatusLine(path, "/opt/claude-usage", false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(path); err != nil {
@@ -56,7 +146,7 @@ func TestInstallRefusesUnparseableSettings(t *testing.T) {
 	if err := os.WriteFile(path, malformed, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := InstallStatusLine(path, "/opt/claude-usage"); err == nil {
+	if err := InstallStatusLine(path, "/opt/claude-usage", false); err == nil {
 		t.Fatal("expected an error for unparseable settings.json, got nil")
 	}
 	got, err := os.ReadFile(path)
