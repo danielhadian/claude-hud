@@ -136,6 +136,12 @@ automatically — open one and the display fills in within ~10 seconds.
 > `--install`): the statusline registration points at the binary's absolute
 > path.
 
+Already have your own status line? `--install` will not overwrite a
+`statusLine` command it did not write — it reports what it found and leaves it
+alone, so a wrapper script that adds your shell prompt survives. If that
+wrapper already pipes the payload through `claude-usage`, you are done; to
+replace it outright, re-run with `--force`.
+
 ## Bring your own hardware
 
 Three tiers of "different", from smallest to largest:
@@ -214,6 +220,27 @@ session registry (`~/.claude/sessions/*.json`), which knows real busy/idle
 state. That registry is undocumented, so on any doubt the tool falls back to
 inferring activity from cost movement across statusline invocations — an
 approximation, and a deliberately second-choice one.
+
+#### Why the percentage can trail claude.ai
+
+The percentages can read a point below the usage page on claude.ai. That is
+inherent to the data source, not a rounding bug here — the host forwards
+`used_percentage` unmodified, and it is already an integer when it arrives:
+
+```
+payload used_percentage: 4   ->   statusline "5h 4%"   ->   wire "five=4"
+```
+
+Two things put the payload behind the website. The payload is a **per-session
+snapshot** that only refreshes when that session completes an API turn, so
+mid-turn it still describes the previous one; and it carries whole percent, so
+whatever fraction the website rounds is already gone before the tool sees it.
+Neither is recoverable from the payload, and the live figure is only available
+from the OAuth usage endpoint this project deliberately does not use (see
+[docs/design/spec.md](docs/design/spec.md)). Displaying the value as sent is
+the honest option: the alternative is inventing a percent the host was never
+told. Running several sessions narrows the gap, since the per-window maximum
+picks up whichever session refreshed most recently.
 
 ### The wire protocol
 
