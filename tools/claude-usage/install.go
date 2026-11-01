@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,7 +19,7 @@ import (
 type ErrCustomStatusLine struct{ Command string }
 
 func (e *ErrCustomStatusLine) Error() string {
-	return "settings.json already has a statusLine command that does not reference this binary: " + e.Command
+	return "settings.json already has a statusLine command that is not this binary: " + e.Command
 }
 
 // existingStatusCommand returns the currently registered statusLine command, or
@@ -33,26 +35,28 @@ func existingStatusCommand(settings map[string]any) string {
 	return cmd
 }
 
-// InstallStatusLine merges a statusLine block into settings.json, preserving
-// every other key. refreshInterval=10 keeps idle sessions reporting so they do
-// not fall out of the session count (see sessions.go).
-//
-// An existing command that already references exe is ours (either the bare path
-// or a wrapper that names it) and is updated in place; one that does not is a
-// third-party status line and is preserved unless force is set.
+// InstallStatusLine registers the quoted executable path, preserving unrelated
+// settings. Only an exact bare-path registration belongs to us; wrappers are
+// custom commands even when they invoke this binary.
 func InstallStatusLine(settingsPath, exe string, force bool) error {
 	settings := map[string]any{}
 	if b, err := os.ReadFile(settingsPath); err == nil {
 		if err := json.Unmarshal(b, &settings); err != nil {
 			return err // never overwrite a file we cannot parse
 		}
+		if settings == nil {
+			return fmt.Errorf("settings.json must contain a JSON object")
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
 	}
-	if cmd := existingStatusCommand(settings); cmd != "" && !force && !strings.Contains(cmd, exe) {
+	command := shellQuote(exe)
+	if cmd := existingStatusCommand(settings); cmd != "" && !force && cmd != exe && cmd != command {
 		return &ErrCustomStatusLine{Command: cmd}
 	}
 	settings["statusLine"] = map[string]any{
 		"type":            "command",
-		"command":         exe,
+		"command":         command,
 		"refreshInterval": 10,
 	}
 	b, err := json.MarshalIndent(settings, "", "  ")
@@ -62,11 +66,10 @@ func InstallStatusLine(settingsPath, exe string, force bool) error {
 	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
 		return err
 	}
-	// Write-then-rename: settings.json is the user's, and a torn write here
-	// costs them every other setting in the file, not just ours.
-	tmp := settingsPath + ".tmp"
-	if err := os.WriteFile(tmp, append(b, '\n'), 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, settingsPath)
+	return writeAtomic(settingsPath, append(b, '\n'))
+}
+
+// shellQuote protects an executable path passed to Claude Code's shell.
+func shellQuote(path string) string {
+	return "'" + strings.ReplaceAll(filepath.ToSlash(path), "'", "'\"'\"'") + "'"
 }

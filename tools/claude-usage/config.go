@@ -54,5 +54,5 @@ func SaveConfig(dir string, c Config) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, "config.json"), append(b, '\n'), 0o644)
+	return writeAtomic(filepath.Join(dir, "config.json"), append(b, '\n'))
 }

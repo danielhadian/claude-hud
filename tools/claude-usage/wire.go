@@ -9,14 +9,13 @@ import (
 
 // pct rounds a 0-100 float to an int and clamps it.
 func pct(f float64) int {
-	v := int(math.Round(f))
-	if v < 0 {
+	if math.IsNaN(f) || f <= 0 {
 		return 0
 	}
-	if v > 100 {
+	if f >= 100 {
 		return 100
 	}
-	return v
+	return int(math.Round(f))
 }
 
 // secsUntil returns whole seconds from now to epoch, never negative.
@@ -49,7 +48,7 @@ func UsageLine(p *Payload, tier string, now time.Time) (string, bool) {
 		parts = append(parts, fmt.Sprintf("seven=%d", pct(seven.UsedPercentage)))
 	}
 	if tier != "" {
-		parts = append(parts, "sub="+tier)
+		parts = append(parts, "sub="+wireTier(tier))
 	}
 	// Omit *_s when resets_at is absent: a nil there is "unknown", not "now".
 	// The board keeps its prior countdown (omission = unchanged) rather than
@@ -61,4 +60,19 @@ func UsageLine(p *Payload, tier string, now time.Time) (string, bool) {
 		parts = append(parts, fmt.Sprintf("seven_s=%d", secsUntil(*seven.ResetsAt, now)))
 	}
 	return strings.Join(parts, "|") + "\n", true
+}
+
+// The reference panel stores 12 ASCII characters. Strip framing characters and
+// bound the field so a user-supplied label cannot inject or overflow a line.
+func wireTier(tier string) string {
+	tier = strings.Map(func(r rune) rune {
+		if r < 32 || r > 126 || r == '|' {
+			return ' '
+		}
+		return r
+	}, tier)
+	if len(tier) > 12 {
+		tier = tier[:12]
+	}
+	return tier
 }

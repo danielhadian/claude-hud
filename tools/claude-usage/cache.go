@@ -1,107 +1,132 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
+	"time"
 )
 
-// cachePath is where the last-known @U and @S lines are persisted, so a
-// rebooted (unplugged/replugged) board can be repopulated instantly instead
-// of showing "waiting for data" until the next statusline invocation.
-func cachePath(dir string) string { return filepath.Join(dir, "last.txt") }
+// Keep receive times per message type: a session update must not restart the
+// usage countdown. Old last.txt caches are ignored and refreshed by live data.
+type cachedState struct {
+	Usage      string `json:"usage"`
+	UsageAt    int64  `json:"usage_at"`
+	Sessions   string `json:"sessions"`
+	SessionsAt int64  `json:"sessions_at"`
+}
 
-// saveCache upserts line into the cache file by its "@U"/"@S" prefix: a new
-// @U replaces the old @U without disturbing the stored @S, and vice versa.
-// Lines that are neither are ignored. Best-effort: errors are returned but
-// callers (the caching sink) treat this as non-fatal.
-func saveCache(dir, line string) error {
-	line = strings.TrimRight(line, "\n")
-	var prefix string
-	switch {
-	case strings.HasPrefix(line, "@U"):
-		prefix = "@U"
-	case strings.HasPrefix(line, "@S"):
-		prefix = "@S"
-	default:
-		return nil // neither kind; nothing to cache
-	}
+func cachePath(dir string) string { return filepath.Join(dir, "last.json") }
 
-	existing := loadCache(dir)
-	var u, s string
-	for _, l := range existing {
-		if strings.HasPrefix(l, "@U") {
-			u = l
-		} else if strings.HasPrefix(l, "@S") {
-			s = l
-		}
+func readCache(dir string) cachedState {
+	var st cachedState
+	b, err := os.ReadFile(cachePath(dir))
+	if err == nil && json.Unmarshal(b, &st) != nil {
+		return cachedState{}
 	}
+	return st
+}
+
+func saveCache(dir, line string) error { return saveCacheAt(dir, line, time.Now()) }
+
+func saveCacheAt(dir, line string, now time.Time) error {
+	line = strings.TrimRight(line, "\r\n")
+	prefix, _, _ := strings.Cut(line, "|")
+	if prefix != "@U" && prefix != "@S" {
+		return nil
+	}
+	st := readCache(dir)
 	if prefix == "@U" {
-		u = line
+		// Merge fields, rather than replace the whole line: omission means unchanged.
+		fields := map[string]string{}
+		for _, l := range []string{ageUsage(st.Usage, now.Unix()-st.UsageAt), line} {
+			parts := strings.Split(l, "|")
+			for _, field := range parts[1:] {
+				key, value, ok := strings.Cut(field, "=")
+				if ok {
+					fields[key] = value
+				}
+			}
+		}
+		keys := make([]string, 0, len(fields))
+		for key := range fields {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		parts := []string{"@U"}
+		for _, key := range keys {
+			parts = append(parts, key+"="+fields[key])
+		}
+		st.Usage, st.UsageAt = strings.Join(parts, "|"), now.Unix()
 	} else {
-		s = line
+		st.Sessions, st.SessionsAt = line, now.Unix()
 	}
-
-	var out []string
-	if u != "" {
-		out = append(out, u)
+	b, err := json.Marshal(st)
+	if err != nil {
+		return err
 	}
-	if s != "" {
-		out = append(out, s)
-	}
-
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	// Write-then-rename, as RecordSession and MergeUsage do. This file is
-	// rewritten on every line the holder forwards (~every 10s), so a crash or
-	// power loss mid-write is not hypothetical; a torn last.txt would feed the
-	// board a truncated @U on its next replay. Rename is atomic, so a reader
-	// sees either the old pair or the new one, never half a line.
-	tmp := cachePath(dir) + ".tmp"
-	if err := os.WriteFile(tmp, []byte(strings.Join(out, "\n")+"\n"), 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, cachePath(dir))
+	return writeAtomic(cachePath(dir), b)
 }
 
-// loadCache never fails hard: a missing or corrupt file yields an empty
-// slice, same fail-open philosophy as LoadConfig. Unparseable lines (neither
-// @U nor @S) are silently ignored. Returns @U first, then @S.
-func loadCache(dir string) []string {
-	b, err := os.ReadFile(cachePath(dir))
-	if err != nil {
-		return []string{}
+// ageUsage preserves percentages but subtracts offline time from reset timers.
+func ageUsage(line string, elapsed int64) string {
+	if elapsed < 0 {
+		elapsed = 0
 	}
-	var u, s string
-	for _, l := range strings.Split(string(b), "\n") {
-		l = strings.TrimSpace(l)
-		if strings.HasPrefix(l, "@U") {
-			u = l
-		} else if strings.HasPrefix(l, "@S") {
-			s = l
+	parts := strings.Split(line, "|")
+	for i, field := range parts {
+		key, value, _ := strings.Cut(field, "=")
+		if key != "five_s" && key != "seven_s" {
+			continue
 		}
+		sec, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			sec = 0
+		}
+		if sec <= elapsed {
+			sec = 0
+		} else {
+			sec -= elapsed
+		}
+		parts[i] = key + "=" + strconv.FormatInt(sec, 10)
 	}
+	return strings.Join(parts, "|")
+}
+
+func loadCache(dir string) []string { return loadCacheAt(dir, time.Now()) }
+
+func loadCacheAt(dir string, now time.Time) []string {
+	st := readCache(dir)
 	out := []string{}
-	if u != "" {
-		out = append(out, u)
+	if strings.HasPrefix(st.Usage, "@U|") {
+		out = append(out, ageUsage(st.Usage, now.Unix()-st.UsageAt))
 	}
-	if s != "" {
-		out = append(out, s)
+	if strings.HasPrefix(st.Sessions, "@S|") {
+		if now.Unix()-st.SessionsAt >= 120 {
+			st.Sessions = "@S|sessions=0|busy=0"
+		}
+		out = append(out, st.Sessions)
 	}
 	return out
 }
 
-// cachingSink decorates a Sink to keep the on-disk cache fresh with the
-// latest @U/@S line on every write, without altering Serve's write-error
-// semantics: a failing wrapped Write must still return that error unchanged
-// so the holder's unplug detection keeps working.
+// cachingSink writes a complete line before caching it. Letting fullWrite retry
+// this decorator would otherwise cache the truncated tail of a short write.
 type cachingSink struct {
 	Sink
 	dir string
 }
 
 func (c *cachingSink) Write(b []byte) (int, error) {
-	_ = saveCache(c.dir, string(b)) // best-effort; caching must never break the write path
-	return c.Sink.Write(b)
+	if err := fullWrite(c.Sink, b); err != nil {
+		return 0, err
+	}
+	_ = saveCache(c.dir, string(b))
+	return len(b), nil
 }

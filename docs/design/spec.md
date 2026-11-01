@@ -1,7 +1,8 @@
 # Statusline-driven usage display — design
 
 **Date:** 2026-07-16
-**Status:** approved in brainstorming, pending spec review
+**Status:** historical design rationale; see the [README](../../README.md) and
+[protocol](../PROTOCOL.md) for current behavior.
 **Supersedes:** the Python polling agent (`agent/claude_usage_agent.py`)
 
 ## Goal

@@ -36,8 +36,9 @@ Devices MUST:
 - **Treat an omitted field as "unchanged"**, keeping the previously received
   value. This is load-bearing: the host omits a rate-limit window's fields
   whenever that window is absent from its data.
-- Bound their line buffer and drop overlong lines whole (the host's lines are
-  well under 100 bytes; 160 is a comfortable buffer).
+- Bound their line buffer and drop overlong lines whole. The reference host
+  bounds tier labels to 12 printable ASCII characters; a 160-byte buffer
+  accommodates its lines.
 
 ## `@U` — usage
 
@@ -49,10 +50,12 @@ Devices MUST:
 | `five_s` | integer ≥ 0 | **seconds remaining** until the 5-hour window resets |
 | `seven_s` | integer ≥ 0 | seconds remaining until the 7-day window resets |
 
-`five`/`five_s` travel together, as do `seven`/`seven_s` — but treat each key
-independently and defensively (clamp percents, cap absurd second counts).
+A percentage may arrive without a reset countdown when the source payload omits
+`resets_at`. Treat each key independently: clamp percentages and cap excessive
+second counts.
 Bound `sub` too, to whatever fits your display — the reference firmware keeps
-the first 12 characters, which covers every current plan label.
+the first 12 characters. The host replaces protocol separators and non-printable
+or non-ASCII characters in the label with spaces.
 
 **Count the reset times down locally.** The host sends seconds-remaining
 snapshots, not formatted strings, precisely so the device can keep the
@@ -82,9 +85,9 @@ countdowns already stay honest.)
 - The host may reopen the port at any time (which auto-resets many dev
   boards). Shortly after opening — it waits ~1.5 s first, so a just-reset
   board is done booting and doesn't lose the bytes — it **replays the
-  last-known `@U` and `@S`** so a freshly reset device shows data instead of
-  a blank screen. Render whatever arrives, whenever it arrives; never require
-  a handshake.
+  last-known usage and session state**. Cached countdowns are reduced by the
+  elapsed time, and session state older than two minutes is replayed as zero.
+  Render whatever arrives; no handshake is required.
 - Before the first line arrives, show an honest "waiting for data" state.
 
 ## Example session

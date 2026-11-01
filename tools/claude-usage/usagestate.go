@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // rate_limits in the statusline payload is a PER-SESSION snapshot: it only
@@ -32,21 +33,32 @@ type usageState struct {
 func usageStatePath(dir string) string { return filepath.Join(dir, "usage-state.json") }
 
 // MergeUsage folds p's rate-limit windows into the persisted per-window
-// maxima and raises each window in p to the highest percentage seen for its
-// reset epoch. A window whose resets_at differs from the stored epoch has
-// genuinely reset, so its (lower) value is accepted and becomes the new
-// baseline. Best-effort by contract: on any read/write error it still merges
-// with whatever it has and returns p — this runs on the statusline path,
-// which must never fail.
-//
-// Concurrent statuslines may race load/save; a lost update only means one
-// push carries a slightly stale maximum, and the next push self-heals — the
-// merge is a monotone fold, so order does not matter.
+// maxima, preferring the newest reset epoch. A file lock serializes the
+// read/merge/write across statusline processes. Lock acquisition is bounded to
+// keep the statusline responsive; storage failures remain best-effort.
 func MergeUsage(dir string, p *Payload) *Payload {
 	if p == nil || p.RateLimits == nil {
 		return p
 	}
 
+	if os.MkdirAll(dir, 0o755) != nil {
+		return p
+	}
+	deadline := time.Now().Add(100 * time.Millisecond)
+	for {
+		release, ok, err := TryLock(filepath.Join(dir, "usage-state.lock"))
+		if err != nil {
+			return p
+		}
+		if ok {
+			defer release()
+			break
+		}
+		if !time.Now().Before(deadline) {
+			return p
+		}
+		time.Sleep(time.Millisecond)
+	}
 	st := usageState{}
 	if b, err := os.ReadFile(usageStatePath(dir)); err == nil {
 		_ = json.Unmarshal(b, &st) // corrupt state = start fresh
@@ -56,12 +68,7 @@ func MergeUsage(dir string, p *Payload) *Payload {
 	st.Seven = mergeWindow(p.RateLimits.SevenDay, st.Seven)
 
 	if b, err := json.Marshal(st); err == nil {
-		if os.MkdirAll(dir, 0o755) == nil {
-			tmp := usageStatePath(dir) + ".tmp"
-			if os.WriteFile(tmp, b, 0o644) == nil {
-				_ = os.Rename(tmp, usageStatePath(dir))
-			}
-		}
+		_ = writeAtomic(usageStatePath(dir), b)
 	}
 	return p
 }
@@ -75,6 +82,11 @@ func mergeWindow(win *Window, st *windowState) *windowState {
 	}
 	if win.ResetsAt == nil {
 		return st // no epoch to key on: pass the value through unmerged
+	}
+	if st != nil && st.ResetsAt > *win.ResetsAt {
+		epoch := st.ResetsAt
+		win.ResetsAt, win.UsedPercentage = &epoch, st.Pct
+		return st
 	}
 	if st != nil && st.ResetsAt == *win.ResetsAt && st.Pct > win.UsedPercentage {
 		win.UsedPercentage = st.Pct // stale session: raise to the known max

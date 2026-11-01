@@ -30,16 +30,16 @@ type liveSession struct {
 	Status string `json:"status"` // "busy" | "idle"
 }
 
-// ClaudeSessionsDir is where Claude Code writes the registry above.
-func ClaudeSessionsDir() string {
+// ClaudeConfigDir honours the same override as Claude Code itself.
+func ClaudeConfigDir() string {
 	if d := os.Getenv("CLAUDE_CONFIG_DIR"); d != "" {
-		return filepath.Join(d, "sessions")
+		return d
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(home, ".claude", "sessions")
+	return filepath.Join(home, ".claude")
 }
 
 // LiveSessionLine renders @S from Claude Code's session registry.
@@ -71,6 +71,9 @@ func LiveSessionLine(dir string) (string, bool) {
 		if json.Unmarshal(b, &s) != nil {
 			continue // corrupt or a schema we don't recognise
 		}
+		if s.Status != "busy" && s.Status != "idle" {
+			continue
+		}
 		if !pidAlive(s.PID) {
 			continue // crashed session left its file behind
 		}
@@ -83,4 +86,11 @@ func LiveSessionLine(dir string) (string, bool) {
 		return "", false // nothing usable here: let the caller fall back
 	}
 	return fmt.Sprintf("@S|sessions=%d|busy=%d\n", total, busy), true
+}
+
+func ClaudeSessionsDir() string {
+	if dir := ClaudeConfigDir(); dir != "" {
+		return filepath.Join(dir, "sessions")
+	}
+	return ""
 }

@@ -3,6 +3,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"syscall"
 )
@@ -18,5 +19,5 @@ func pidAlive(pid int) bool {
 		return false
 	}
 	err = p.Signal(syscall.Signal(0))
-	return err == nil || err == os.ErrPermission
+	return err == nil || errors.Is(err, os.ErrPermission)
 }

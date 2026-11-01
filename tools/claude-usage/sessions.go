@@ -57,14 +57,7 @@ func RecordSession(dir string, p *Payload, now time.Time) error {
 	if err != nil {
 		return err
 	}
-	// Write-then-rename so a SessionLine scan in another session's process never
-	// reads a half-written file. The ".tmp" suffix keeps the temp out of that
-	// scan (which matches *.json), so it can't be counted as an extra session.
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return writeAtomic(path, b)
 }
 
 // SessionLine renders @S from the state dir, pruning stale files as it goes.

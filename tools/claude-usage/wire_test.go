@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -81,5 +82,18 @@ func TestUsageLine(t *testing.T) {
 				t.Errorf("UsageLine() = %q,%v; want %q,%v", got, ok, tc.want, tc.ok)
 			}
 		})
+	}
+}
+
+func TestUsageLineBoundsTier(t *testing.T) {
+	got, _ := UsageLine(p(win(5, 1000), nil), "Pro|five=99\n@S|busy=2"+strings.Repeat("x", 200), at(900))
+	if strings.Count(got, "\n") != 1 || strings.Count(got, "|five=") != 1 || len(got) >= 160 {
+		t.Fatalf("tier corrupted framing: %q", got)
+	}
+}
+
+func TestPctClampsBeforeIntegerConversion(t *testing.T) {
+	if pct(1e100) != 100 || pct(-1e100) != 0 {
+		t.Fatal("large percentages overflow before clamping")
 	}
 }

@@ -18,7 +18,7 @@ import (
 const version = "1.4.0"
 
 // defaultTier is the label assumed when --install is given none and none is
-// stored. The tier is not in the statusline payload (see CLAUDE.md), so it can
+// stored. The tier is not in the statusline payload (see README.md), so it can
 // only ever come from the user.
 const defaultTier = "Max 20x"
 
@@ -226,9 +226,9 @@ func tierOrDefault(tier string) string {
 }
 
 func runInstall(tier string, force bool) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "cannot find home dir:", err)
+	dir := ClaudeConfigDir()
+	if dir == "" {
+		fmt.Fprintln(os.Stderr, "cannot find Claude Code config dir")
 		os.Exit(1)
 	}
 	exe, err := os.Executable()
@@ -236,7 +236,7 @@ func runInstall(tier string, force bool) {
 		fmt.Fprintln(os.Stderr, "cannot find own path:", err)
 		os.Exit(1)
 	}
-	settings := filepath.Join(home, ".claude", "settings.json")
+	settings := filepath.Join(dir, "settings.json")
 	registered := true
 	if err := InstallStatusLine(settings, exe, force); err != nil {
 		var custom *ErrCustomStatusLine
@@ -252,7 +252,7 @@ func runInstall(tier string, force bool) {
 		fmt.Printf("    %s\n", custom.Command)
 		fmt.Printf("  If that wrapper already feeds the payload to this binary, you are done.\n"+
 			"  To replace it with the bare binary, re-run with --force:\n"+
-			"    %s --install --force %q\n", exe, tierOrDefault(tier))
+			"    %s --install --force %s\n", shellQuote(exe), shellQuote(tierOrDefault(tier)))
 	}
 	cfg := LoadConfig(ConfigDir())
 	if tier != "" {

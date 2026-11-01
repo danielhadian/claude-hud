@@ -54,9 +54,22 @@ func LockPath() string { return filepath.Join(runtimeDir(), "claude-usage.lock")
 // released for flashing. A second holder fails to bind and must not steal
 // the port.
 func Serve(sock string, sink Sink, idle time.Duration) error {
+	// sinkMu guards sink writes and the closed flag together, so a handler
+	// either writes before Close sets the flag (and finishes before Close can
+	// acquire the lock) or observes closed == true and skips the write --
+	// never a write reaching an already-closed sink.
+	var sinkMu sync.Mutex
+	closed := false
+	defer func() {
+		sinkMu.Lock()
+		closed = true
+		sinkMu.Unlock()
+		sink.Close()
+	}()
+
 	// A stale socket file from a killed holder would block bind; remove it only
 	// if nothing is listening.
-	if c, err := net.Dial("unix", sock); err == nil {
+	if c, err := net.DialTimeout("unix", sock, 100*time.Millisecond); err == nil {
 		c.Close()
 		return &net.OpError{Op: "listen", Net: "unix", Err: os.ErrExist}
 	}
@@ -75,34 +88,29 @@ func Serve(sock string, sink Sink, idle time.Duration) error {
 	last := time.Now()
 	touch := func() { lastMu.Lock(); last = time.Now(); lastMu.Unlock() }
 
-	// sinkMu guards sink writes and the closed flag together, so a handler
-	// either writes before Close sets the flag (and finishes before Close can
-	// acquire the lock) or observes closed == true and skips the write --
-	// never a write reaching an already-closed sink.
-	var sinkMu sync.Mutex
-	closed := false
-	defer func() {
-		sinkMu.Lock()
-		closed = true
-		sinkMu.Unlock()
-		sink.Close()
-	}()
-
 	// stop closes ln exactly once, whether triggered by the idle watchdog or by
 	// a handler that hit a write error (the device is gone). Both paths unblock
 	// Accept -> Serve returns -> deferred sink.Close() + flock release.
 	var stopOnce sync.Once
 	stop := func() { stopOnce.Do(func() { ln.Close() }) }
 
+	done := make(chan struct{})
+	defer close(done)
 	go func() {
+		ticker := time.NewTicker(50 * time.Millisecond)
+		defer ticker.Stop()
 		for {
-			time.Sleep(50 * time.Millisecond)
-			lastMu.Lock()
-			quiet := time.Since(last)
-			lastMu.Unlock()
-			if quiet >= idle {
-				stop() // unblocks Accept -> Serve returns -> sink.Close()
+			select {
+			case <-done:
 				return
+			case <-ticker.C:
+				lastMu.Lock()
+				quiet := time.Since(last)
+				lastMu.Unlock()
+				if quiet >= idle {
+					stop()
+					return
+				}
 			}
 		}
 	}()
@@ -115,8 +123,14 @@ func Serve(sock string, sink Sink, idle time.Duration) error {
 		touch()
 		go func(c net.Conn) {
 			defer c.Close()
+			_ = c.SetReadDeadline(time.Now().Add(idle))
 			sc := bufio.NewScanner(c)
 			for sc.Scan() {
+				// Scanner can return a buffered fragment when a read deadline expires.
+				// It is not a complete update and must not reach the device.
+				if sc.Err() != nil {
+					return
+				}
 				line := []byte(sc.Text() + "\n") // Text() copies; sc.Bytes() aliases the scanner buffer
 				sinkMu.Lock()
 				var writeErr error
@@ -133,6 +147,7 @@ func Serve(sock string, sink Sink, idle time.Duration) error {
 					return
 				}
 				touch()
+				_ = c.SetReadDeadline(time.Now().Add(idle))
 			}
 		}(conn)
 	}

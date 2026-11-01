@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Faithful host-side preview of the 128x160 ST7735 usage panel.
+"""Layout comparison tool for the 128x160 ST7735 usage panel.
 
 Renders with the ACTUAL Adafruit_GFX glyph data (FreeSans* custom fonts + the
 built-in 5x7 glcdfont) and the same draw primitives the firmware uses, so text
-sizes, right-alignment and overlaps show up truthfully — no more guessing blind.
+sizes and right-alignment can be checked. The historical comparison scenes
+are not an exact rendering of the shipped firmware; use docs/simulator.html
+for the current reference.
 
-Edit LAYOUT / DATA below and run:  python3 panel_preview.py out.png [scale]
+Run: python3 panel_preview.py [new|current|new100|boot] [out.png] [scale]
 """
 import os
 import re
@@ -16,7 +18,10 @@ from PIL import Image, ImageDraw
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from svg_path_to_rgb565 import render_svg_image
 
-GFXDIR = os.path.expanduser("~/Arduino/libraries/Adafruit_GFX_Library")
+GFXDIR = os.path.join(
+    os.environ.get("ARDUINO_DIRECTORIES_USER", os.path.expanduser("~/Arduino")),
+    "libraries", "Adafruit_GFX_Library",
+)
 W, H = 128, 160
 
 # firmware colour constants (approx RGB of the RGB565 values)

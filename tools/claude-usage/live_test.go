@@ -84,3 +84,22 @@ func TestLiveSessionLineCountsOnlyBusyAsBusy(t *testing.T) {
 		t.Errorf("LiveSessionLine() = %q,%v; want 3 sessions, 1 busy", got, ok)
 	}
 }
+
+func TestLiveSessionLineUnknownSchemaFallsBack(t *testing.T) {
+	dir := t.TempDir()
+	writeLive(t, dir, "unknown", os.Getpid(), "")
+	if line, ok := LiveSessionLine(dir); ok {
+		t.Fatalf("unknown status reported as idle: %q", line)
+	}
+}
+
+func TestClaudeConfigDirOverride(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	if got := ClaudeConfigDir(); got != dir {
+		t.Fatalf("config dir = %q", got)
+	}
+	if got := ClaudeSessionsDir(); got != filepath.Join(dir, "sessions") {
+		t.Fatalf("sessions dir = %q", got)
+	}
+}

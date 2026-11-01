@@ -275,6 +275,7 @@ static void tickResets() {
   if (usage.fiveResetValid) {
     uint32_t elapsed = (millis() - usage.fiveResetBaseMs) / 1000UL;
     uint32_t f = usage.fiveResetSec > elapsed ? usage.fiveResetSec - elapsed : 0;
+    if (f == 0) usage.fiveResetSec = 0;  // stay expired across later millis() rollovers
     formatRemaining(f, buf, sizeof buf);
     if (strcmp(buf, usage.fiveReset)) {
       strlcpy(usage.fiveReset, buf, sizeof usage.fiveReset);
@@ -285,6 +286,7 @@ static void tickResets() {
   if (usage.sevenResetValid) {
     uint32_t elapsed = (millis() - usage.sevenResetBaseMs) / 1000UL;
     uint32_t s = usage.sevenResetSec > elapsed ? usage.sevenResetSec - elapsed : 0;
+    if (s == 0) usage.sevenResetSec = 0;
     formatRemaining(s, buf, sizeof buf);
     if (strcmp(buf, usage.sevenReset)) {
       strlcpy(usage.sevenReset, buf, sizeof usage.sevenReset);

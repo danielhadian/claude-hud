@@ -145,8 +145,12 @@ func TestSecondHolderFailsToBind(t *testing.T) {
 	sock := filepath.Join(t.TempDir(), "s.sock")
 	go func() { _ = Serve(sock, &fakeSink{}, 2*time.Second) }()
 	waitForSocket(t, sock)
-	if err := Serve(sock, &fakeSink{}, time.Second); err == nil {
-		t.Fatal("second holder should fail to bind, not steal the port")
+	sink := &fakeSink{}
+	if err := Serve(sock, sink, time.Second); err == nil {
+		t.Fatal("second holder should fail to bind")
+	}
+	if !sink.Closed() {
+		t.Fatal("failed listener leaked the sink")
 	}
 }
 
@@ -183,12 +187,9 @@ func TestPostIdleCloseWriteDoesNotReachSink(t *testing.T) {
 		t.Fatal("holder never exited on idle")
 	}
 
-	// Now complete the line on the still-open connection. If the fix is
-	// reverted, the handler's Scan() unblocks and writes straight into the
-	// already-closed sink.
-	if _, err := conn.Write([]byte("|sub=Max 20x\n")); err != nil {
-		t.Fatal(err)
-	}
+	// Try completing the line after shutdown. The idle read deadline may have
+	// already closed this connection; either way, no data may reach the sink.
+	_, _ = conn.Write([]byte("|sub=Max 20x\n"))
 	time.Sleep(200 * time.Millisecond)
 
 	if sink.WroteAfterClosed() {

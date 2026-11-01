@@ -15,7 +15,6 @@
 
 ## Global Constraints
 
-- **NO GIT. This repo is not a git repository.** `CLAUDE.md` says: "There is **no git repo** here — do not init one or commit." This overrides the writing-plans skill's commit steps. Every task ends with a **Checkpoint** (run tests, verify output) instead of a commit. Do not run `git init`, `git add`, or `git commit`.
 - **Scope is Linux + macOS.** Windows is explicitly deferred: the spec records detached spawn on Windows (`DETACHED_PROCESS`) as unverified and requires a spike before its install path is built. Unix-specific files use `//go:build unix`. The pure core must stay platform-neutral so a later Windows plan only adds files.
 - **Fail-open, always.** The binary runs inside the user's statusline. Any error → still print a statusline, exit 0. Never hang, never panic, never non-zero in statusline mode.
 - **Serial port opens with DTR and RTS deasserted** (`docs/HARDWARE.md`) — asserting them drives the ESP8266 into the UART bootloader.

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -128,7 +129,44 @@ func TestCachingSinkPropagatesWriteError(t *testing.T) {
 
 func TestCachePathUnderConfigDir(t *testing.T) {
 	dir := t.TempDir()
-	if got, want := cachePath(dir), filepath.Join(dir, "last.txt"); got != want {
+	if got, want := cachePath(dir), filepath.Join(dir, "last.json"); got != want {
 		t.Errorf("cachePath() = %q; want %q", got, want)
+	}
+}
+
+func TestCacheMergesPartialUsageAndAgesCountdowns(t *testing.T) {
+	dir := t.TempDir()
+	if err := saveCacheAt(dir, "@U|five=4|seven=10|five_s=100|seven_s=300", at(1000)); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveCacheAt(dir, "@U|five=5|five_s=80", at(1020)); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveCacheAt(dir, "@S|sessions=2|busy=1", at(1030)); err != nil {
+		t.Fatal(err)
+	}
+	got := loadCacheAt(dir, at(1050))
+	if len(got) != 2 || got[0] != "@U|five=5|five_s=50|seven=10|seven_s=250" {
+		t.Fatalf("lost fields or replayed stale countdown: %q", got)
+	}
+	got = loadCacheAt(dir, at(1500))
+	if len(got) != 2 || got[0] != "@U|five=5|five_s=0|seven=10|seven_s=0" || got[1] != "@S|sessions=0|busy=0" {
+		t.Fatalf("expired cache = %q", got)
+	}
+}
+
+func TestCachingSinkShortWritesKeepCompleteLine(t *testing.T) {
+	dir := t.TempDir()
+	inner := &fakeSink{shortWrite: true}
+	cs := &cachingSink{Sink: inner, dir: dir}
+	line := "@U|five=7|seven=10\n"
+	if err := fullWrite(cs, []byte(line)); err != nil {
+		t.Fatal(err)
+	}
+	if got := loadCache(dir); len(got) != 1 || got[0] != strings.TrimSpace(line) {
+		t.Fatalf("cached partial write: %q", got)
+	}
+	if inner.String() != line {
+		t.Fatalf("serial data = %q", inner.String())
 	}
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"sync"
 	"testing"
 )
 
@@ -99,5 +100,41 @@ func TestMergeToleratesNilsAndCorruptState(t *testing.T) {
 	}
 	if got := MergeUsage(dir, payloadWin(5, 1000)); got.RateLimits.FiveHour.UsedPercentage != 5 {
 		t.Error("corrupt state must be discarded, not fatal")
+	}
+}
+
+func TestMergeRejectsPreviousResetWindow(t *testing.T) {
+	dir := t.TempDir()
+	MergeUsage(dir, payloadWin(90, 1000))
+	MergeUsage(dir, payloadWin(3, 2000))
+	got := MergeUsage(dir, payloadWin(95, 1000))
+	w := got.RateLimits.FiveHour
+	if w.UsedPercentage != 3 || *w.ResetsAt != 2000 {
+		t.Fatalf("old snapshot replaced new window: %+v", w)
+	}
+	got = MergeUsage(dir, payloadWin(2, 2000))
+	if got.RateLimits.FiveHour.UsedPercentage != 3 {
+		t.Fatal("new baseline was lost")
+	}
+}
+
+func TestMergeConcurrentWindowsKeepBothMaxima(t *testing.T) {
+	dir := t.TempDir()
+	var wg sync.WaitGroup
+	for i := 1; i <= 20; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			if i%2 == 0 {
+				MergeUsage(dir, p(win(float64(i), 1000), nil))
+			} else {
+				MergeUsage(dir, p(nil, win(float64(i), 2000)))
+			}
+		}(i)
+	}
+	wg.Wait()
+	got := MergeUsage(dir, p(win(0, 1000), win(0, 2000)))
+	if got.RateLimits.FiveHour.UsedPercentage != 20 || got.RateLimits.SevenDay.UsedPercentage != 19 {
+		t.Fatalf("lost concurrent update: %+v", got.RateLimits)
 	}
 }

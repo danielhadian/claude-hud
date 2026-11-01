@@ -1,349 +1,232 @@
 # claude-hud
 
-**Your live Claude usage on a real display on your desk — any microcontroller, any screen.**
+A USB hardware display for Claude Code usage and session activity. A small Go
+statusline tool sends usage data to a microcontroller over serial. The reference
+firmware runs on an ESP8266 with a 128×160 ST7735 TFT.
 
 [![CI](https://github.com/danielhadian/claude-hud/actions/workflows/ci.yml/badge.svg)](https://github.com/danielhadian/claude-hud/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Platforms](https://img.shields.io/badge/host-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey)](#platform-support)
 
-<div align="center">
-  <img src="docs/images/panel.png" alt="The claude-hud reference panel: a coral-on-black usage screen showing 5-hour and weekly limit meters with reset countdowns, a Max 20x tier pill, and one dot per open Claude Code session" width="380">
-  <br>
-  <sub>The reference firmware's usage view — <code>5-HOUR</code> / <code>WEEKLY</code> meters, tier pill, live reset countdowns, and one dot per session.</sub>
-  <br><br>
-  <a href="https://danielhadian.github.io/claude-hud/simulator.html"><b>▶&nbsp;Try the panel in your browser</b></a> — an exact recreation (<a href="docs/simulator.html">source</a>): the real bitmaps and glyph data drawn with ported <code>Adafruit_GFX</code> primitives, with sliders for every field the host pushes.
-</div>
+<p align="center">
+  <img src="docs/images/panel.png" width="380" alt="Usage display with 5-hour and weekly meters, reset countdowns, subscription tier, and session indicators">
+</p>
 
-A hardware HUD for Claude Code: 5-hour and weekly limit percentages with live
-countdown timers, your subscription tier, and how many Claude Code sessions
-are open and working right now. A small Go binary runs as **Claude Code's
-statusline** and pushes the data over USB serial to whatever device you point
-it at.
+[Try the browser simulator](https://danielhadian.github.io/claude-hud/simulator.html)
+for a preview of the reference display.
 
+The display shows:
+
+- Five-hour and weekly usage percentages, with reset countdowns.
+- A subscription tier label you configure during installation.
+- One dot per session: filled and pulsing for busy, hollow for idle.
+
+The host reads Claude Code's statusline payload. It does not read credentials,
+call an API, or require Wi-Fi. Usage data becomes available after a session's
+first API response on supported subscription plans. Without it, the terminal
+statusline shows `usage —`.
+
+## How it works
+
+```text
+Claude Code → statusline JSON → claude-usage → local socket → port holder
+                                   ↓                            ↓
+                            terminal statusline             USB display
 ```
-Claude Code ──statusline JSON──► claude-usage ──local socket──► claude-usage --hold
- (rate_limits)                    (statusline)                   (owns the port)
-                                       │                               │
-                                       ▼                               ▼ USB serial
-                                 your terminal:                  your device
-                                 5h 4% · 7d 10%                  (any MCU + display)
-```
 
-**No credentials. No API calls. No WiFi. No cloud.** Claude Code already knows
-your usage and hands it to its statusline over a
-[documented interface](https://code.claude.com/docs/en/statusline); claude-hud
-just forwards it to hardware. Unplug the device and nothing breaks — the
-statusline keeps printing in your terminal.
+Opening a serial port resets many development boards. The statusline therefore
+starts a detached port holder on demand, rather than opening the port on every
+update. The holder exits after five minutes without data or when a write fails.
+No service manager is required. The statusline continues to work without a device.
 
-## Two pieces, one thin contract
+The host and device communicate through a small [serial protocol](docs/PROTOCOL.md).
+You can use the reference firmware or implement the protocol on another device.
 
-- **The host tool** (`tools/claude-usage`, Go) is device-agnostic. It speaks a
-  [two-line serial protocol](docs/PROTOCOL.md) — plain text, one-way,
-  forward-compatible. Anything that parses two line formats is a valid
-  display: an ESP8266, an RP2040, an Arduino with a character LCD, a spare
-  e-reader, a Python script drawing in a terminal.
-- **The reference firmware** (`firmware/`) is a complete, polished
-  implementation for the cheapest common combo — an ESP8266 NodeMcu and a
-  1.8" ST7735 TFT, about $5 of parts — with measured performance numbers and
-  every hardware trap documented. Use it as-is, adapt it, or ignore it and
-  build your own from the [protocol spec](docs/PROTOCOL.md).
+## Reference hardware
 
-## Highlights
+- ESP8266 NodeMcu-style board with a USB-UART bridge.
+- 1.8-inch ST7735 TFT, 128×160 pixels.
+- Eight jumper wires and a USB data cable.
 
-- **Zero-maintenance data path** — register once as the statusline; a
-  port-holder process starts itself on demand and exits when idle. No daemon,
-  no service manager, nothing to keep running.
-- **Truthful when quiet** — reset countdowns tick down *on the device* from
-  seconds pushed by the host, and stale session dots decay to "none" after
-  2 minutes of silence instead of pulsing forever.
-- **Fast reference renderer** — the ESP8266 firmware pushes pixels through the
-  hardware SPI FIFO (~80% of the bus ceiling, 65 fps full-screen, measured),
-  with dirty-region rendering so a data tick repaints only what changed.
-- **Defensive by contract** — the statusline path always prints a line and
-  always exits 0, whatever fails. The panel is a nice-to-have; your terminal
-  is not.
-
-## Quick start (reference build)
-
-The steps below assume the reference hardware. **Different board or display?**
-See [Bring your own hardware](#bring-your-own-hardware) — step 2 is identical
-no matter what you build.
-
-### Parts
-
-| Part | Notes |
-|---|---|
-| ESP8266 dev board (NodeMcu-style) | Any board with a USB-UART bridge — CP2102, CH340, FTDI and PL2303 are all auto-detected |
-| 1.8" ST7735 TFT, 128×160 | The common blue "ST7735 + SD" module; other ST7735/ST7789 variants need only a config-header edit |
-| 8 jumper wires | |
-
-### Wiring (reference module)
-
-| Display | NodeMcu | |
+| Display | NodeMcu | Purpose |
 |---|---|---|
-| `1-RST` | `D4` | |
-| `2-CS`  | `D8` | |
-| `3-D/C` | `D3` | |
-| `4-DIN` | `D7` | MOSI — fixed by the SPI hardware |
-| `5-CLK` | `D5` | SCLK — fixed by the SPI hardware |
-| `6-VCC` | **`Vin`** | **5 V, not 3V3** on the blue module — see below |
-| `7-BL`  | `3V3` | |
-| `8-GND` | `GND` | |
+| RST | D4 | Reset |
+| CS | D8 | Chip select |
+| D/C | D3 | Data/command |
+| DIN | D7 | SPI MOSI |
+| CLK | D5 | SPI clock |
+| VCC | **Vin (5 V)** | Power on the reference module |
+| BL | 3V3 | Backlight |
+| GND | GND | Ground |
 
-Pins are defined in one place (`firmware/lib/Panel/src/Panel.h`) if your board
-routes differently.
+> **Check your module's power requirements.** The reference blue ST7735+SD
+> module has an onboard regulator and needs **5 V at VCC**. Feeding it 3.3 V
+> can leave the backlight dark. Other modules may require different wiring.
 
-> [!WARNING]
-> On the common blue "ST7735 + SD" module, **`VCC` goes to `Vin` (5 V), not
-> `3V3`**: the module regulates VCC down itself, and 3.3 V in leaves the
-> backlight too starved to light. **It looks exactly like a dead display** —
-> flashes on at power-up, then dark. [docs/HARDWARE.md](docs/HARDWARE.md) has
-> the full story, plus two library bugs that each cost an afternoon.
+See [hardware notes](docs/HARDWARE.md) for module identification, wiring details,
+and measured display performance.
 
-### 1. Flash the firmware
+## Setup
 
-Prerequisites: [`arduino-cli`](https://arduino.github.io/arduino-cli/) on your
-PATH (or in `~/.local/bin`).
+### 1. Build and flash the reference firmware
 
-```bash
+Install [Arduino CLI](https://arduino.github.io/arduino-cli/), then run from the
+repository root:
+
+```sh
 cd firmware
-make deps     # first time only: esp8266 core + Adafruit ST7735 library
-make usage    # compile + flash; auto-detects the serial port
+make deps
+make usage
 ```
 
-On Windows, flash from WSL2 (with
-[usbipd-win](https://github.com/dorssel/usbipd-win) passing the USB device
-through), or run the two `arduino-cli` commands from the Makefile manually
-with `-p COMx`.
+`make deps` downloads the ESP8266 core and Adafruit display libraries.
+`make usage` builds the firmware and flashes the first detected USB serial port.
+Specify the port when multiple devices are connected:
 
-### 2. Register the host tool
+```sh
+make usage PORT=/dev/ttyUSB1
+```
 
-Prerequisites: [Go](https://go.dev/dl/) 1.25+.
+On Windows, use WSL2 with USB passthrough or run the Makefile's Arduino CLI
+commands manually with a port such as `COM3`.
 
-```bash
+### 2. Build and register the host tool
+
+Install [Go](https://go.dev/dl/) **1.25 or later**. From the repository root:
+
+```sh
 cd tools/claude-usage
-go build -o claude-usage .        # claude-usage.exe on Windows
-./claude-usage --install "Max 20x"   # your plan: "Pro", "Max 5x", "Max 20x", ...
+go build -o claude-usage .
+./claude-usage --install "Pro"
 ```
 
-That's the whole setup. `--install` merges a `statusLine` block into
-`~/.claude/settings.json` (leaving every other setting alone) and stores your
-tier label. From then on, every Claude Code session pushes usage to the device
-automatically — open one and the display fills in within ~10 seconds.
+On Windows, build `claude-usage.exe`. Replace `Pro` with your tier label, such as
+`Max 5x` or `Max 20x`. An installation without a label preserves an existing
+label, or defaults to `Max 20x` on first use.
 
-> [!NOTE]
-> Keep the built binary where you built it (or move it first, then re-run
-> `--install`): the statusline registration points at the binary's absolute
-> path.
+The installer merges a `statusLine` entry into Claude Code's `settings.json`
+and saves the display configuration. It honors `CLAUDE_CONFIG_DIR`; otherwise
+it uses `~/.claude`. Keep the binary at its registered location. If you move it,
+run `--install` again; replacing an old registration may require `--force`.
 
-Already have your own status line? `--install` will not overwrite a
-`statusLine` command it did not write — it reports what it found and leaves it
-alone, so a wrapper script that adds your shell prompt survives. If that
-wrapper already pipes the payload through `claude-usage`, you are done; to
-replace it outright, re-run with `--force`.
+An existing custom statusline is preserved, including wrappers that invoke
+`claude-usage`. To replace one deliberately:
 
-## Bring your own hardware
+```sh
+./claude-usage --install --force "Pro"
+```
 
-Three tiers of "different", from smallest to largest:
-
-1. **Same ST7735 family, different size or tab** — edit `PANEL_W`, `PANEL_H`,
-   `PANEL_TAB` (and `PANEL_ROTATION` for mounting) in
-   `firmware/lib/Panel/src/Panel.h`. The layout derives from the panel
-   dimensions where that's safe.
-2. **Any other Adafruit-GFX-supported display** (ST7789, ILI9341, SSD1306
-   OLED, …) — swap the base class in `Panel.h`/`Panel.cpp`; the sketches draw
-   only through the portable Adafruit_GFX API, so they compile unchanged. The
-   file's header comment walks through it.
-3. **Entirely different platform** — RP2040, ESP32, a desktop widget, a
-   character LCD, CircuitPython, anything that can read a serial line:
-   implement the [wire protocol](docs/PROTOCOL.md). It is two text line
-   formats and a checklist of six behaviours; the spec includes a worked
-   example. The host tool needs zero changes — set `baud` in `config.json` if
-   your device wants something other than 115200.
-
-Whatever you target, the [browser simulator](https://danielhadian.github.io/claude-hud/simulator.html)
-doubles as a runnable rendering reference: it draws the exact view the
-reference firmware draws, from the same wire values you'll be parsing.
-
-If you build one, open a PR or an issue — ports and photos are the most
-welcome contributions there are.
-
-## What the reference firmware shows
-
-- **5-HOUR** and **WEEKLY** usage %, each with a meter and a "resets in …"
-  countdown that ticks down on the device itself
-- your **subscription tier** (Pro / Max 5x / Max 20x / …)
-- **session activity** — one dot per open Claude Code session: filled and
-  pulsing for busy, hollow for idle, decaying to "none" when nothing has
-  reported for 2 minutes
+Open or continue a Claude Code session. The display normally updates within
+about ten seconds. Disconnecting the hardware does not interrupt Claude Code.
 
 ## Configuration
 
-`config.json` lives in the OS config dir —
-Linux: `~/.config/claude-usage/`, macOS: `~/Library/Application Support/claude-usage/`,
-Windows: `%AppData%\claude-usage\`:
+The host configuration is `claude-usage/config.json` under the OS configuration
+directory:
+
+| System | Default location |
+|---|---|
+| Linux | `~/.config/claude-usage/` (honors `XDG_CONFIG_HOME`) |
+| macOS | `~/Library/Application Support/claude-usage/` |
+| Windows | `%AppData%\claude-usage\` |
 
 ```json
 {
-  "tier": "Max 20x",
+  "tier": "Pro",
   "port": "auto",
   "baud": 115200
 }
 ```
 
-- **`tier`** — the label on the display. Not part of the statusline payload,
-  so it's set at install (`--install "Pro"`) and never guessed; a bare
-  `--install` defaults it to `"Max 20x"`.
-- **`port`** — `"auto"` scans for USB-UART bridges: `/dev/ttyUSB*`,
-  `/dev/ttyACM*` and the specific `cu.*` bridge patterns (SLAB, usbserial,
-  wchusbserial, usbmodem) on Linux/macOS; on Windows, COM ports matched by
-  VID:PID (CP2102, CH340, FTDI, PL2303), falling back to any USB serial port.
-  Set an explicit device path to pin it.
-- **`baud`** — serial speed; change it only if your firmware does.
+- `tier`: display label. The reference panel uses up to 12 printable ASCII
+  characters; protocol separators and control characters are replaced with spaces.
+- `port`: `auto` or an explicit device path. Automatic detection finds USB serial
+  devices on Linux/macOS and prefers common USB-UART bridges on Windows.
+- `baud`: serial speed; it must match your device firmware.
 
-## How it works
+Changes to `port` or `baud` take effect when the holder next starts. Close the
+holder before flashing from outside the Makefile; `make usage` handles this for you.
 
-### Where the data comes from
+## Data and accuracy
 
-Claude Code passes its statusline command a JSON payload on stdin containing
-`rate_limits.five_hour` / `.seven_day` (`used_percentage`, `resets_at`). That
-documented payload is the **only** source — the tool reads no credentials and
-calls no API.
+Usage comes from each session's most recent statusline payload, so it can lag
+behind usage shown on claude.ai. The tool rounds the reported percentage; it
+cannot recover precision or activity absent from the payload. Across sessions,
+it keeps the highest reported usage for each reset window and rejects snapshots
+from older windows.
 
-Each session's payload is its own snapshot, refreshed when that session gets
-an API response — so with several sessions open they can briefly disagree. The
-host folds them into a per-window maximum (keyed by the window's reset time),
-so a session holding a stale snapshot can never drag the display backwards.
+Session activity uses Claude Code's local session registry, an undocumented
+interface. When that source is unavailable or unrecognized, the host estimates
+activity from recent statusline calls and cost changes. This fallback can miss
+idle sessions and does not reliably indicate work in progress. The display
+clears session activity after two minutes without an update.
 
-Session activity isn't in the payload, so it's read from Claude Code's own
-session registry (`~/.claude/sessions/*.json`), which knows real busy/idle
-state. That registry is undocumented, so on any doubt the tool falls back to
-inferring activity from cost movement across statusline invocations — an
-approximation, and a deliberately second-choice one.
+The device counts reset times down locally between updates. After a reconnect,
+the host replays cached usage with elapsed time subtracted from the countdowns.
+Stale cached session activity is cleared.
 
-#### Why the percentage can trail claude.ai
+## Other hardware
 
-The percentages can read a point below the usage page on claude.ai. That is
-inherent to the data source, not a rounding bug here — the host forwards
-`used_percentage` unmodified, and it is already an integer when it arrives:
+For another ST7735 variant, adjust pins, initialization, rotation, and display
+settings in [`Panel.h`](firmware/lib/Panel/src/Panel.h). The reference layout is
+tuned for a portrait display of at least 128×160 pixels; changing the dimensions
+alone does not redesign it.
 
-```
-payload used_percentage: 4   ->   statusline "5h 4%"   ->   wire "five=4"
-```
-
-Two things put the payload behind the website. The payload is a **per-session
-snapshot** that only refreshes when that session completes an API turn, so
-mid-turn it still describes the previous one; and it carries whole percent, so
-whatever fraction the website rounds is already gone before the tool sees it.
-Neither is recoverable from the payload, and the live figure is only available
-from the OAuth usage endpoint this project deliberately does not use (see
-[docs/design/spec.md](docs/design/spec.md)). Displaying the value as sent is
-the honest option: the alternative is inventing a percent the host was never
-told. Running several sessions narrows the gap, since the per-window maximum
-picks up whichever session refreshed most recently.
-
-### The wire protocol
-
-One compact line per signal; the device parses, caches, and renders:
-
-```
-@U|five=4|seven=10|sub=Max 20x|five_s=14160|seven_s=140400
-@S|sessions=3|busy=2
-```
-
-`five_s`/`seven_s` are **seconds remaining** until each limit resets — the
-device counts them down locally, so the display stays truthful even when
-nothing is pushing. A window's fields are **omitted** when that rate limit is
-absent from the payload, and omission means "unchanged". Full spec, including
-forward-compatibility rules and a device-implementation checklist:
-[docs/PROTOCOL.md](docs/PROTOCOL.md).
-
-### Why there's a holder process
-
-**Opening the serial port resets most dev boards** (auto-reset circuitry;
-measured 10/10 on the reference board, and disabling `HUPCL` does not help —
-`firmware/scripts/reset_probe.py` proves it). A statusline command is
-short-lived and runs every few seconds; if it opened the port itself, the
-device would reboot forever.
-
-So `claude-usage --hold` opens the port **once** and holds it, and statusline
-invocations hand it lines over a local socket. The holder:
-
-- takes an exclusive file lock **before** opening the port, closing the race
-  where two holders would interleave writes to the device
-- starts on demand when nothing is listening (rate-limited to one attempt per
-  60 s, so a machine with no device attached doesn't fork endlessly)
-- **replays the last-known values once the just-reset device has finished
-  booting** (~1.5 s after opening — bytes sent while an auto-reset board is
-  still in its boot ROM are simply lost), so it repaints promptly instead of
-  sitting on "waiting for data"
-- exits when a write fails (device unplugged) or after 5 minutes idle,
-  releasing the port for reflashing
-
-## Platform support
-
-| | Linux | macOS | Windows |
-|---|---|---|---|
-| Host tool | ✅ | ✅ | ✅ (Windows 10 1803+)¹ |
-| Flashing the reference firmware | ✅ `make usage` | ✅ `make usage` | via WSL2 or manual `arduino-cli` |
-| Port detection | glob (`ttyUSB*`, `ttyACM*`) | glob (bridge `cu.*` patterns) | VID:PID match, USB fallback |
-
-¹ The statusline↔holder socket uses `AF_UNIX`, available on Windows 10 1803+.
-The Windows port is CI-verified (build + vet) but has seen less real-hardware
-time than Linux/macOS — issue reports welcome.
+Using another Adafruit display driver requires adapting `Panel.h` and
+`Panel.cpp`, including the SPI fast paths. For another MCU or display stack,
+implement the [wire protocol](docs/PROTOCOL.md); the host tool needs no changes.
 
 ## Troubleshooting
 
-| Symptom | Cause / fix |
+| Problem | Check |
 |---|---|
-| Backlight flashes then dark (blue ST7735 module) | `VCC` wired to `3V3` — move it to `Vin` (5 V). See the warning above. |
-| `permission denied` on the port (Linux) | `sudo usermod -aG dialout $USER`, then log out/in. |
-| `Device or resource busy` when flashing | The holder owns the port. `make usage` stops it automatically; from elsewhere, wait 5 min (idle exit) or kill `claude-usage --hold`. |
-| Display says "waiting for data" | Nothing has pushed yet — open a Claude Code session. The statusline is the data source, so something has to run. |
-| Display upside down | Physical mount orientation. Change `PANEL_ROTATION` in `firmware/lib/Panel/src/Panel.h` (0–3) and reflash. |
-| Wrong port auto-detected | Pin it: set `"port"` in `config.json`, and flash with `make usage PORT=/dev/...`. |
-| Usage seems stale | Usage spent in the browser (claude.ai) counts against the same limits but only reaches the display when some Claude Code session reports it. |
+| Backlight flashes, then goes dark | Confirm your module's VCC requirement; the reference blue module needs 5 V. |
+| Serial port permission denied on Linux | Check device ownership and your distribution's serial-port group, commonly `dialout`. Group changes require a new login. |
+| Port busy during flashing | Stop the port holder, or flash through `make usage`. |
+| Display waits for data | Confirm the statusline registration, subscription support, and that Claude Code has received an API response. |
+| Wrong serial device selected | Set `port` explicitly in `config.json`; pass `PORT=...` when flashing. |
+| Display upside down | Adjust `PANEL_ROTATION` in `Panel.h` and reflash. |
+| Usage appears stale | Check the terminal statusline. Browser usage only reaches the display when a Claude Code session reports an updated snapshot. |
+
+Use `make monitor` in `firmware/` to inspect serial debug output while the holder
+is stopped.
 
 ## Development
 
-```bash
-# Host tool — all tests are hermetic (temp dirs + fakes; no hardware needed)
-cd tools/claude-usage
-gofmt -l . && go vet ./... && go test ./... -race
+Host tests use temporary directories and fake serial sinks; no hardware or
+Claude credentials are needed:
 
-# Reference firmware — compile everything without flashing
+```sh
+cd tools/claude-usage
+test -z "$(gofmt -l .)"
+go vet ./...
+go test ./... -race -count=1
+```
+
+Compile all four reference sketches without flashing:
+
+```sh
 cd firmware
 make build-all
-
-# Diagnostics firmware
-make selftest   # end-to-end hardware verification
-make probe      # measures the panel's actual capabilities
-make monitor    # serial monitor @115200
 ```
 
-Layout:
+CI runs these checks, cross-compiles the host for Linux and macOS (amd64/arm64)
+and Windows (amd64), and vets Windows-specific code. Windows behavior is
+cross-compiled in CI; it has less physical-device testing than Linux/macOS.
 
-```
-tools/claude-usage/     host tool: statusline + port holder (Go; device-agnostic)
-firmware/
-  usage_display/        reference firmware (make usage)
-  lib/Panel/            display driver — the single hardware configuration point
-  examples/             selftest, probe, logo demos
-  scripts/              SVG→RGB565 rasterisers, reset_probe.py, panel preview
-docs/PROTOCOL.md        the wire protocol — implement this to use ANY hardware
-docs/HARDWARE.md        reference build: every measured number, and the traps
-docs/simulator.html     the panel recreated in a browser — the rendering spec, runnable
-docs/design/            design rationale (spec.md) and build history (build-plan.md)
-```
+`make selftest` and `make probe` flash diagnostic sketches. Physical hardware
+is required to validate serial behavior, wiring, and the displayed image.
 
-The reference firmware's SPI bus is write-only (no MISO), so self-tests prove
-the MCU side only — **only eyes confirm the picture**. When you need ground
-truth on what the device received, watch its serial echo: `make monitor`.
-
-Contributions welcome — especially ports to other boards and displays, and
-real-hardware reports from macOS and Windows. Please run the commands above
-before opening a PR; CI runs them too, plus cross-compiles for all five
-supported platforms.
+| Path | Contents |
+|---|---|
+| `tools/claude-usage/` | Go statusline tool and port holder |
+| `firmware/usage_display/` | Reference usage display |
+| `firmware/lib/Panel/` | Display driver and hardware settings |
+| `firmware/examples/` | Diagnostic and demo sketches |
+| `firmware/scripts/` | Bitmap generation, layout previews, and hardware probes |
+| `docs/PROTOCOL.md` | Device protocol |
+| `docs/HARDWARE.md` | Reference hardware notes |
+| `docs/simulator.html` | Standalone browser simulator |
+| `docs/design/` | Historical design rationale and implementation plan |
 
 ## License
 
